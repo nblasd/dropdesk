@@ -58,3 +58,18 @@
 :root[data-theme="dark"] .client-setup-icon.sage{background:#26372b;color:#a8d1ae}
 :root[data-theme="dark"] .client-setup-icon.peach{background:#392b24;color:#dba78a}
 :root[data-theme="dark"] .client-setup-icon.lilac{background:#302d3d;color:#c5bce4}
+
+.legal-shell{min-height:100vh;background:#101710;color:#e0e8e1;padding:0 24px 72px}
+.legal-nav{max-width:760px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;padding:28px 0}
+.legal-brand{font-size:19px;font-weight:700;letter-spacing:-.02em;color:#e0e8e1;text-decoration:none}
+.legal-brand>span{color:#a8d1ae}
+.legal-back{font-size:14px;color:#a1aca3;text-decoration:none}
+.legal-back:hover{color:#e0e8e1}
+.legal-body{max-width:760px;margin:0 auto}
+.legal-kicker{margin:24px 0 12px;font-size:11px;letter-spacing:.14em;color:#a8d1ae}
+.legal-body h1{margin:0 0 10px;font-size:38px;line-height:1.15;letter-spacing:-.02em}
+.legal-updated{margin:0 0 36px;font-size:13px;color:#8f9a91}
+.legal-body h2{margin:32px 0 8px;font-size:16px}
+.legal-body p{margin:0;font-size:15px;line-height:1.7;color:#c5d5c7}
+.legal-body a{color:#a8d1ae}
+@media (max-width:600px){.legal-body h1{font-size:30px}.legal-shell{padding:0 18px 56px}}
