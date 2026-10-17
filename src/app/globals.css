@@ -73,3 +73,25 @@
 .legal-body p{margin:0;font-size:15px;line-height:1.7;color:#c5d5c7}
 .legal-body a{color:#a8d1ae}
 @media (max-width:600px){.legal-body h1{font-size:30px}.legal-shell{padding:0 18px 56px}}
+
+.settings-page{display:flex;flex-direction:column;gap:14px}
+.settings-intro h2{font-family:var(--display);font-size:13px;letter-spacing:-.2px;margin:0}
+.settings-intro p{font-size:10px;color:#92968f;margin:4px 0 0}
+.settings-panel{padding:16px 16px 8px}
+.settings-table td{padding:8px 5px}
+.settings-table td:last-child{text-align:right;white-space:nowrap}
+.settings-actions{display:inline-flex;gap:14px;align-items:center}
+.text-button.danger{color:#aa4938}
+.text-button.danger:hover{color:#8d3629}
+.color-swatches{display:flex;gap:8px;margin:2px 0 16px}
+.color-swatch{width:30px;height:30px;border-radius:9px;border:2px solid transparent;padding:0;box-shadow:inset 0 0 0 1px #0000000d}
+.color-swatch.selected{border-color:#3e7055}
+.modal-danger{margin-top:16px;padding-top:13px;border-top:1px solid #eff0ed;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.modal-danger p{font-size:10px;color:#92968f;margin:0}
+.client-settings-form .modal-actions{margin-top:18px}
+:root[data-theme="dark"] .settings-intro p,:root[data-theme="dark"] .modal-danger p{color:#9ca99f}
+:root[data-theme="dark"] .text-button.danger{color:#f0b4a6}
+:root[data-theme="dark"] .text-button.danger:hover{color:#ffcabb}
+:root[data-theme="dark"] .color-swatch{box-shadow:inset 0 0 0 1px #ffffff14}
+:root[data-theme="dark"] .color-swatch.selected{border-color:#a8d1ae}
+:root[data-theme="dark"] .modal-danger{border-color:#2b362e}
