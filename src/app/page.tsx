@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, ArrowDown, ArrowDownToLine, ArrowLeftRight, ArrowUpRight, BadgeCheck, Bell, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, ClipboardList, Command, CreditCard, FileSpreadsheet, Filter, LayoutDashboard, Link2, ListPlus, LogOut, MoreHorizontal, Package, Pencil, Plus, Search, Settings2, ShoppingBag, Sparkles, Store, TrendingUp, Users, Trash2, X, type LucideIcon } from "lucide-react";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-type Client = { id: string; name: string; initials: string; color: string; store: string };
+type Client = { id: string; name: string; initials: string; color: string; store: string; workspace_id?: string; user_id?: string };
 type Product = { id: string; title: string; source: string; sourceUrl?: string; cost: number; price: number; profit: number; margin: number; status: string; date: string };
 type Listing = { id: string; title: string; source: string; price: number; sku: string; status: string; date: string };
 type Order = { id: string; sourceId: string; source: string; item: string; cost: number; sale: number; fee: number; profit: number; status: string; date: string };
@@ -53,6 +53,8 @@ export default function Home() {
   const [deleteTarget, setDeleteTarget] = useState<Client|null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [sourceFilter, setSourceFilter] = useState("All sources");
+  const [userWorkspaceId, setUserWorkspaceId] = useState<string|null>(null);
+  const [userRole, setUserRole] = useState<"owner"|"manager"|"va"|"viewer">("viewer");
   const current = clients.find(c=>c.id===active) ?? clients[0];
 
   useEffect(()=>{
@@ -80,30 +82,23 @@ export default function Home() {
   useEffect(()=>{
     if(!supabase||!userId)return;
     const timer=setTimeout(async()=>{
-      const clientRows=clients.map(c=>({...c,user_id:userId}));
+      const clientRows=clients.filter(c=>c.workspace_id&&c.user_id===userId).map(c=>({...c,user_id:userId}));
       if(clientRows.length) await supabase.from("clients").upsert(clientRows,{onConflict:"id"});
-      const workspaceRows=Object.entries(data).flatMap(([clientId,sheets])=>Object.entries(sheets).flatMap(([sheet,records])=>(records as any[]).map(r=>({id:String(r.id),user_id:userId,client_id:clientId,sheet,payload:r,updated_at:new Date().toISOString()}))));
-      await supabase.from("workspace_rows").delete().eq("user_id",userId);
-      if(workspaceRows.length) await supabase.from("workspace_rows").insert(workspaceRows);
+      const workspaceRows=Object.entries(data).flatMap(([clientId,sheets])=>Object.entries(sheets).flatMap(([sheet,records])=>(records as any[]).map(r=>{const {__rowId,__createdBy,...payload}=r;return {id:String(r.id),user_id:__createdBy??userId,client_id:clientId,sheet,payload,updated_at:new Date().toISOString()}})));
+      if(workspaceRows.length) await supabase.from("workspace_rows").upsert(workspaceRows,{onConflict:"id"});
       const tables=Object.entries(customTables).flatMap(([clientId,clientTables])=>clientTables.map(t=>({id:t.id,user_id:userId,client_id:clientId,name:t.name,columns:t.columns,rows:t.rows,updated_at:new Date().toISOString()})));
       if(tables.length) await supabase.from("workspace_tables").upsert(tables,{onConflict:"id"});
     },700);
     return ()=>clearTimeout(timer);
   },[supabase,userId,clients,data,customTables]);
   const loadWorkspace=async(sb:SupabaseClient, uid:string):Promise<boolean>=>{
-    const [clientResult,rowResult,tableResult]=await Promise.all([sb.from("clients").select("id,name,initials,color,store").eq("user_id",uid),sb.from("workspace_rows").select("id,client_id,sheet,payload").eq("user_id",uid),sb.from("workspace_tables").select("id,client_id,name,columns,rows").eq("user_id",uid)]);
+    const clientResult=await sb.from("clients").select("id,name,initials,color,store,workspace_id,user_id").is("archived_at",null);
+    const [rowResult,tableResult,membershipResult]=await Promise.all([sb.from("workspace_rows").select("id,user_id,client_id,sheet,payload").is("deleted_at",null),sb.from("workspace_tables").select("id,client_id,name,columns,rows").is("deleted_at",null),sb.from("workspace_members").select("workspace_id,role").eq("user_id",uid).order("created_at")]);
     if(clientResult.error||rowResult.error){toast("Could not load saved workspace. Check the Supabase schema.");return false}
+    const membership=membershipResult.data?.[0]; if(membership){setUserWorkspaceId(membership.workspace_id);setUserRole(membership.role)}
     if(tableResult.error)toast("Custom table cloud sync needs the workspace_tables migration in Supabase.");
     const allClients = (clientResult.data ?? []) as Client[];
-      const legacyClients = allClients.filter((c) => isLegacyDemoClient(c.id));
-      if (legacyClients.length) {
-        const legacyIds = legacyClients.map((c) => c.id);
-        const { error: rowDeleteError } = await sb.from("workspace_rows").delete().eq("user_id", uid).in("client_id", legacyIds);
-        if (rowDeleteError) { toast("Could not remove old sample data from this workspace."); return false; }
-        const { error: clientDeleteError } = await sb.from("clients").delete().eq("user_id", uid).in("id", legacyIds);
-        if (clientDeleteError) { toast("Could not remove old sample clients from this workspace."); return false; }
-      }
-      const remoteClients = allClients.filter((c) => !isLegacyDemoClient(c.id));
+      const remoteClients = allClients;
       if (!remoteClients.length) {
         setClients([]);
         setData({});
@@ -114,7 +109,7 @@ export default function Home() {
       }
       const next: WorkspaceData = {};
       remoteClients.forEach((c) => { next[c.id] = emptyClientData(); });
-      rowResult.data?.forEach((row: any) => { if (next[row.client_id] && row.sheet in next[row.client_id]) next[row.client_id][row.sheet as Exclude<Sheet, "Overview">].push(row.payload); });
+      rowResult.data?.forEach((row: any) => { if (next[row.client_id] && row.sheet in next[row.client_id]) next[row.client_id][row.sheet as Exclude<Sheet, "Overview">].push({...row.payload,__rowId:row.id,__createdBy:row.user_id}); });
       const nextTables:Record<string,CustomTable[]>={};
       tableResult.data?.forEach((table:any)=>{if(next[table.client_id]){(nextTables[table.client_id]??=[]).push({id:table.id,name:table.name,columns:Array.isArray(table.columns)?table.columns:[],rows:Array.isArray(table.rows)?table.rows:[]})}});
       setClients(remoteClients);setData(next);setCustomTables(nextTables);setActive(remoteClients[0].id);return true;
@@ -131,16 +126,27 @@ export default function Home() {
   }),[rows,query,sourceFilter]);
   const allOrders = Object.values(data).flatMap(d=>d.Orders||[]);
   const orderProfit = allOrders.reduce((a,r)=>a+r.profit,0);
-  const setRows = (name:string, next:any[])=>customTable&&name===customTable.id?setCustomTables(prev=>({...prev,[active]:(prev[active]??[]).map(t=>t.id===name?{...t,rows:next}:t)})):setData(prev=>({...prev,[active]:{...prev[active], [name]:next}}));
+  const setRows = (name:string, next:any[])=>{
+    if(userEmail&&userRole==="viewer"){toast("Your role is read-only");return}
+    if(!(customTable&&name===customTable.id)&&supabase&&userId){
+      const prior=data[active]?.[name]??[];const remaining=new Set(next.map(row=>String(row.__rowId??row.id)));
+      const removed=prior.map(row=>String(row.__rowId??row.id)).filter(id=>!remaining.has(id));
+      if(removed.length)void supabase.from("workspace_rows").update({deleted_at:new Date().toISOString(),deleted_by:userId}).eq("client_id",active).in("id",removed);
+    }
+    customTable&&name===customTable.id?setCustomTables(prev=>({...prev,[active]:(prev[active]??[]).map(t=>t.id===name?{...t,rows:next}:t)})):setData(prev=>({...prev,[active]:{...prev[active], [name]:next}}));
+  };
   const addClient = ()=>{
     const name=clientName.trim(); if(!name)return;
+    if(userEmail&&userRole!=="owner")return toast("Only a workspace owner can create clients");
+    if(userEmail&&userRole!=="owner")return toast("Only a workspace owner can create clients");
     const id=`c${Date.now()}`; const initials=name.split(/\s+/).slice(0,2).map(x=>x[0]).join("").toUpperCase();
-    const client={id,name,initials,color:["#e6e7dc","#f3ded8","#dce8ef"][clients.length%3],store:`${name.split(" ")[0]}’s Store`};
+    const client={id,name,initials,color:["#e6e7dc","#f3ded8","#dce8ef"][clients.length%3],store:`${name.split(" ")[0]}’s Store`,workspace_id:userWorkspaceId??undefined,user_id:userId??undefined};
     setClients([...clients,client]); setData({...data,[id]:emptyClientData()}); setActive(id); setSheet("Overview"); setClientName(""); setModal(null); toast("Client workspace created");
   };
   const openClientSettings=(client:Client)=>{setSettingsDraft({id:client.id,name:client.name,store:client.store,color:client.color});setModal("clientSettings")};
   const saveClientSettings=()=>{
     if(!settingsDraft)return;
+    if(userEmail&&userRole!=="owner")return toast("Only a workspace owner can edit client settings");
     const name=settingsDraft.name.trim();
     if(!name)return toast("Enter a client name");
     const store=settingsDraft.store.trim()||`${name.split(" ")[0]}’s Store`;
@@ -154,20 +160,18 @@ export default function Home() {
     const target=deleteTarget;
     setDeleteBusy(true);
     try{
+      if(userEmail&&userRole!=="owner")throw new Error("Only a workspace owner can archive clients");
       if(supabase&&userId){
-        const rowResult=await supabase.from("workspace_rows").delete().eq("user_id",userId).eq("client_id",target.id);
-        if(rowResult.error)throw rowResult.error;
-        const tableResult=await supabase.from("workspace_tables").delete().eq("user_id",userId).eq("client_id",target.id);
-        if(tableResult.error)throw tableResult.error;
-        const clientResult=await supabase.from("clients").delete().eq("user_id",userId).eq("id",target.id);
-        if(clientResult.error)throw clientResult.error;
+        if(userRole!=="owner")throw new Error("Only a workspace owner can archive clients");
+        const clientResult=await supabase.from("clients").update({archived_at:new Date().toISOString(),archived_by:userId}).eq("id",target.id).select("id").maybeSingle();
+        if(clientResult.error||!clientResult.data)throw new Error("Could not archive this client");
       }
       const remaining=clients.filter(c=>c.id!==target.id);
       setClients(remaining);
       setData(previous=>Object.fromEntries(Object.entries(previous).filter(([id])=>id!==target.id)));
       setCustomTables(previous=>Object.fromEntries(Object.entries(previous).filter(([id])=>id!==target.id)));
       if(active===target.id){setActive(remaining[0]?.id??"");setSheet("Overview")}
-      setDeleteTarget(null);setModal(null);toast(`${target.name} and their data were deleted`);
+      setDeleteTarget(null);setModal(null);toast(`${target.name} was archived`);
     }catch(error){toast(error instanceof Error?error.message:"Could not delete this client")}finally{setDeleteBusy(false)}
   };
   const toast=(s:string)=>{setNotice(s);setTimeout(()=>setNotice(""),2600)};
@@ -288,7 +292,7 @@ export default function Home() {
     </section>
     </>}
     {notice&&<div className="toast"><span className="toast-check">✓</span>{notice}</div>}
-    {modal&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setModal(null)}}><div className="modal"><button className="modal-close" onClick={()=>setModal(null)} aria-label="Close"><X size={17}/></button>{modal==="client"?<><span className="modal-icon mint"><Users size={19}/></span><h2>Add a client</h2><p>Create a workspace for your client’s stores, product ideas, listings, and orders.</p><label>CLIENT NAME</label><input autoFocus className="modal-input" value={clientName} onChange={e=>setClientName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addClient()} placeholder="e.g. Alex Morgan"/><div className="modal-note"><Store size={15}/> You can add their store name and details later.</div><button className="button primary modal-submit" onClick={addClient}><Plus size={16}/> Create workspace</button></>:modal==="product"?<ProductModal name={productName} setName={setProductName} sourceUrl={productSourceUrl} setSourceUrl={setProductSourceUrl} source={productSource} setSource={setProductSource} cost={supplierCost} setCost={setSupplierCost} price={ebayPrice} setPrice={setEbayPrice} onAdd={addProduct}/>:modal==="edit"?<RowEditModal title={customTable?.name??sheet} draft={editDraft} fields={Object.keys(editDraft).filter(key=>key!=="id"&&key!=="__rowId"&&(customTable||!(["profit","margin"].includes(key))))} setDraft={setEditDraft} onSave={saveEditedRow} onClose={()=>setModal(null)}/>:modal==="import"?<ImportTableModal name={importName} setName={setImportName} file={importFile} setFile={setImportFile} busy={importBusy} onImport={createTableFromImport} onClose={()=>setModal(null)}/>:modal==="clientSettings"&&settingsDraft?<ClientSettingsModal draft={settingsDraft} setDraft={setSettingsDraft} onSave={saveClientSettings} onDelete={()=>{const target=clients.find(c=>c.id===settingsDraft.id); if(target)requestDeleteClient(target)}} onClose={()=>{setModal(null);setSettingsDraft(null)}}/>:modal==="deleteClient"&&deleteTarget?<DeleteClientModal client={deleteTarget} rows={Object.values(data[deleteTarget.id]??{}).reduce((total,sheetRows)=>total+(sheetRows as any[]).length,0)} tables={customTables[deleteTarget.id]??[]} busy={deleteBusy} onConfirm={confirmDeleteClient} onCancel={()=>{setModal(null);setDeleteTarget(null)}}/>:<><span className="modal-icon lavender"><BadgeCheck size={19}/></span><h2>{authMode==="signup"?"Create your Dropdesk account":"Welcome back"}</h2><p>{authMode==="signup"?"Start organizing client stores, products, listings, and orders.":"Sign in to continue to your workspace."}</p><button className="google-auth-button" type="button" onClick={continueWithGoogle}><span className="google-g">G</span>Continue with Google</button><div className="auth-divider"><span/>or continue with email<span/></div><form onSubmit={submitAuth}>{authMode==="signup"&&<><label htmlFor="auth-name">YOUR NAME</label><input id="auth-name" autoComplete="name" className="modal-input" value={authName} onChange={e=>setAuthName(e.target.value)} placeholder="Your name" required/></>}<label htmlFor="auth-email">EMAIL ADDRESS</label><input id="auth-email" autoFocus type="email" autoComplete="email" className="modal-input" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="you@example.com" required/><label htmlFor="auth-password">PASSWORD</label><input id="auth-password" type="password" autoComplete={authMode==="signup"?"new-password":"current-password"} minLength={8} className="modal-input" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="At least 8 characters" required/><button className="button primary modal-submit" type="submit" disabled={authBusy}>{authBusy?(authMode==="signup"?"Creating account…":"Signing in…"):(authMode==="signup"?"Create account":"Sign in")}<ArrowUpRight size={15}/></button></form><button className="auth-mode-switch" type="button" onClick={()=>setAuthMode(authMode==="signup"?"login":"signup")}>{authMode==="signup"?"Already have an account? Sign in":"New to Dropdesk? Create an account"}</button><div className="modal-note"><BadgeCheck size={15}/> Your workspace is private to your account.</div></>}</div></div>}
+    {modal&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setModal(null)}}><div className="modal"><button className="modal-close" onClick={()=>setModal(null)} aria-label="Close"><X size={17}/></button>{modal==="client"?<><span className="modal-icon mint"><Users size={19}/></span><h2>Add a client</h2><p>Create a workspace for your client’s stores, product ideas, listings, and orders.</p><label>CLIENT NAME</label><input autoFocus className="modal-input" value={clientName} onChange={e=>setClientName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addClient()} placeholder="e.g. Alex Morgan"/><div className="modal-note"><Store size={15}/> You can add their store name and details later.</div><button className="button primary modal-submit" onClick={addClient}><Plus size={16}/> Create workspace</button></>:modal==="product"?<ProductModal name={productName} setName={setProductName} sourceUrl={productSourceUrl} setSourceUrl={setProductSourceUrl} source={productSource} setSource={setProductSource} cost={supplierCost} setCost={setSupplierCost} price={ebayPrice} setPrice={setEbayPrice} onAdd={addProduct}/>:modal==="edit"?<RowEditModal title={customTable?.name??sheet} draft={editDraft} fields={Object.keys(editDraft).filter(key=>key!=="id"&&key!=="__rowId"&&key!=="__createdBy"&&(customTable||!(["profit","margin"].includes(key))))} setDraft={setEditDraft} onSave={saveEditedRow} onClose={()=>setModal(null)}/>:modal==="import"?<ImportTableModal name={importName} setName={setImportName} file={importFile} setFile={setImportFile} busy={importBusy} onImport={createTableFromImport} onClose={()=>setModal(null)}/>:modal==="clientSettings"&&settingsDraft?<ClientSettingsModal draft={settingsDraft} setDraft={setSettingsDraft} onSave={saveClientSettings} onDelete={()=>{const target=clients.find(c=>c.id===settingsDraft.id); if(target)requestDeleteClient(target)}} onClose={()=>{setModal(null);setSettingsDraft(null)}}/>:modal==="deleteClient"&&deleteTarget?<DeleteClientModal client={deleteTarget} rows={Object.values(data[deleteTarget.id]??{}).reduce((total,sheetRows)=>total+(sheetRows as any[]).length,0)} tables={customTables[deleteTarget.id]??[]} busy={deleteBusy} onConfirm={confirmDeleteClient} onCancel={()=>{setModal(null);setDeleteTarget(null)}}/>:<><span className="modal-icon lavender"><BadgeCheck size={19}/></span><h2>{authMode==="signup"?"Create your Dropdesk account":"Welcome back"}</h2><p>{authMode==="signup"?"Start organizing client stores, products, listings, and orders.":"Sign in to continue to your workspace."}</p><button className="google-auth-button" type="button" onClick={continueWithGoogle}><span className="google-g">G</span>Continue with Google</button><div className="auth-divider"><span/>or continue with email<span/></div><form onSubmit={submitAuth}>{authMode==="signup"&&<><label htmlFor="auth-name">YOUR NAME</label><input id="auth-name" autoComplete="name" className="modal-input" value={authName} onChange={e=>setAuthName(e.target.value)} placeholder="Your name" required/></>}<label htmlFor="auth-email">EMAIL ADDRESS</label><input id="auth-email" autoFocus type="email" autoComplete="email" className="modal-input" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="you@example.com" required/><label htmlFor="auth-password">PASSWORD</label><input id="auth-password" type="password" autoComplete={authMode==="signup"?"new-password":"current-password"} minLength={8} className="modal-input" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="At least 8 characters" required/><button className="button primary modal-submit" type="submit" disabled={authBusy}>{authBusy?(authMode==="signup"?"Creating account…":"Signing in…"):(authMode==="signup"?"Create account":"Sign in")}<ArrowUpRight size={15}/></button></form><button className="auth-mode-switch" type="button" onClick={()=>setAuthMode(authMode==="signup"?"login":"signup")}>{authMode==="signup"?"Already have an account? Sign in":"New to Dropdesk? Create an account"}</button><div className="modal-note"><BadgeCheck size={15}/> Your workspace is private to your account.</div></>}</div></div>}
   </main>;
 }
 
@@ -365,5 +369,5 @@ function ClientSettingsModal({draft,setDraft,onSave,onDelete,onClose}:{draft:{id
 function DeleteClientModal({client,rows,tables,busy,onConfirm,onCancel}:{client:Client;rows:number;tables:CustomTable[];busy:boolean;onConfirm:()=>void;onCancel:()=>void}) {
   const tableCount=tables.length;
   const parts=[`${rows} table row${rows===1?"":"s"}`, ...(tableCount?[`${tableCount} imported table${tableCount===1?"":"s"}`]:[])];
-  return <><span className="modal-icon peach"><Trash2 size={19}/></span><h2>Delete {client.name}?</h2><p>This permanently removes {client.name}’s workspace along with {parts.join(" and ")}. This cannot be undone.</p><div className="modal-actions"><button className="button secondary" type="button" onClick={onCancel} disabled={busy}>Keep client</button><button className="button danger" type="button" onClick={onConfirm} disabled={busy}>{busy?"Deleting…":"Delete client"}</button></div></>;
+  return <><span className="modal-icon peach"><Trash2 size={19}/></span><h2>Delete {client.name}?</h2><p>This archives {client.name} and hides it from normal workspace views. An owner can restore it from the database.</p><div className="modal-actions"><button className="button secondary" type="button" onClick={onCancel} disabled={busy}>Keep client</button><button className="button danger" type="button" onClick={onConfirm} disabled={busy}>{busy?"Archiving…":"Archive client"}</button></div></>;
 }

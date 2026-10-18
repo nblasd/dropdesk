@@ -34,3 +34,11 @@ To ship a change, commit and push to `main`; Vercel builds the deployment and sw
 - Add team invitations and per-client access if clients will log in themselves.
 - Set your preferred marketplace fee calculation and currency per client.
 - Configure custom SMTP, backups, and conflict-safe row synchronization before relying on it with paying clients. The starter sync is optimized for a single operator editing one browser at a time.
+
+## Workspaces and access control
+
+Apply [`supabase/migrations/20261018_secure_multi_client_access.sql`](supabase/migrations/20261018_secure_multi_client_access.sql) to an existing project, or run [`supabase/schema.sql`](supabase/schema.sql) for a fresh project. The migration preserves existing client and operational row IDs, creates an owner workspace for each existing account with clients, and assigns those clients to that workspace. New accounts receive an owner workspace through an `auth.users` trigger.
+
+Workspace membership is separate from client access. Roles are `owner`, `manager`, `va`, and `viewer`; client visibility is `workspace` (all workspace members), `selected` (owner and explicitly granted members), or `private` (owner and explicitly granted members). PostgreSQL RLS filters client, row, and imported-table reads and writes. Hard deletion is not available through the authenticated API; clients and operational rows use archive timestamps. Workspace owners can create a seven-day invitation with `create_workspace_invitation(workspace_id,email,role,client_ids)` and accept with `accept_workspace_invitation(token)`. The create function returns the raw random token once; only its hash is stored. The current app does not send invitation emails or expose member/access management screens, so invitation delivery and access administration must currently be wired through a trusted owner-only workflow.
+
+Audit records currently capture operational row/table create, update, and delete events plus invitation create/accept events. Audit records omit row before/after values. Existing demo/local-storage mode is browser-local and is not a multi-user security boundary; use authenticated Supabase mode for shared access.
