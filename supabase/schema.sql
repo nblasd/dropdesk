@@ -12,7 +12,8 @@ create table if not exists public.clients (
 create table if not exists public.workspace_rows (
   id text primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
-  client_id text not null references public.clients(id) on delete cascade,
+  client_id text references public.clients(id) on delete cascade,
+  workspace_id text references public.workspaces(id) on delete cascade,
   sheet text not null check (sheet in ('Product hunting','Listings','Orders')),
   payload jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
@@ -88,6 +89,13 @@ create index if not exists clients_workspace_idx on public.clients(workspace_id)
 create index if not exists workspace_members_user_idx on public.workspace_members(user_id,workspace_id);
 create index if not exists client_access_user_idx on public.client_access(user_id,client_id);
 create index if not exists workspace_rows_client_idx on public.workspace_rows(client_id,sheet) where deleted_at is null;
+create index if not exists workspace_rows_workspace_idx on public.workspace_rows(workspace_id) where deleted_at is null;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'workspace_rows_scope_check') then
+    alter table public.workspace_rows add constraint workspace_rows_scope_check
+      check ((client_id is not null and workspace_id is null) or (client_id is null and workspace_id is not null));
+  end if;
+end $$;
 create index if not exists workspace_tables_client_idx on public.workspace_tables(client_id) where deleted_at is null;
 create index if not exists audit_logs_workspace_created_idx on public.audit_logs(workspace_id,created_at desc);
 
@@ -197,6 +205,12 @@ create policy "Client access managed by owner" on public.client_access for all t
 create policy "Accessible rows read" on public.workspace_rows for select to authenticated using(deleted_at is null and public.can_access_client(client_id));
 create policy "Accessible rows insert" on public.workspace_rows for insert to authenticated with check(public.can_write_client(client_id));
 create policy "Accessible rows update" on public.workspace_rows for update to authenticated using(public.can_write_client(client_id)) with check(public.can_write_client(client_id));
+drop policy if exists "Workspace rows read" on public.workspace_rows;
+drop policy if exists "Workspace rows insert" on public.workspace_rows;
+drop policy if exists "Workspace rows update" on public.workspace_rows;
+create policy "Workspace rows read" on public.workspace_rows for select to authenticated using(deleted_at is null and client_id is null and public.is_workspace_member(workspace_id));
+create policy "Workspace rows insert" on public.workspace_rows for insert to authenticated with check(client_id is null and workspace_id is not null and public.workspace_role(workspace_id) in ('owner','manager','va'));
+create policy "Workspace rows update" on public.workspace_rows for update to authenticated using(client_id is null and public.workspace_role(workspace_id) in ('owner','manager','va')) with check(client_id is null and workspace_id is not null and public.workspace_role(workspace_id) in ('owner','manager','va'));
 create policy "Accessible tables read" on public.workspace_tables for select to authenticated using(deleted_at is null and public.can_access_client(client_id));
 create policy "Accessible tables insert" on public.workspace_tables for insert to authenticated with check(public.can_write_client(client_id));
 create policy "Accessible tables update" on public.workspace_tables for update to authenticated using(public.can_write_client(client_id)) with check(public.can_write_client(client_id));

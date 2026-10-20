@@ -122,3 +122,10 @@ select option{background-color:#fff;color:#3f463e}
 :root[data-theme="dark"] .filter-chip select{background-color:#19221b;color:#d5ded6}
 .filter-chip select:hover{color:#3f463e}
 :root[data-theme="dark"] .filter-chip select:hover{color:#e4ebe5}
+
+/* Small "shared" marker on the client-less Product hunting entry. */
+.nav-shared-tag{margin-left:auto;font-size:8px;letter-spacing:.5px;text-transform:uppercase;color:#8b9187;background:#f0f2ee;border-radius:5px;padding:2px 5px}
+.nav-link.active .nav-shared-tag{background:#e3ede5;color:#4c7355}
+:root[data-theme="dark"] .nav-shared-tag{background:#26332a;color:#9fb3a3}
+.inline-warning{color:#b5795d;font-weight:600}
+:root[data-theme="dark"] .inline-warning{color:#dda184}
