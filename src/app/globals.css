@@ -111,3 +111,14 @@
 :root[data-theme="dark"] .invite-form .modal-actions{background:#19221b}
 .invite-error{margin:10px 0 0;padding:9px 11px;border:1px solid #e8c9c0;border-radius:7px;background:#fdf3ef;color:#8c4a37;font-size:10px;line-height:1.5}
 :root[data-theme="dark"] .invite-error{background:#2b1f1a;border-color:#4c332a;color:#e6ab95}
+
+/* Native dropdown lists (source filter, role pickers) are drawn by the browser,
+   not by our markup, so they need their own colours or they open as a white
+   list on the dark theme. */
+select{color-scheme:light}
+:root[data-theme="dark"] select{color-scheme:dark}
+select option{background-color:#fff;color:#3f463e}
+:root[data-theme="dark"] select option{background-color:#19221b;color:#d5ded6}
+:root[data-theme="dark"] .filter-chip select{background-color:#19221b;color:#d5ded6}
+.filter-chip select:hover{color:#3f463e}
+:root[data-theme="dark"] .filter-chip select:hover{color:#e4ebe5}
