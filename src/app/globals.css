@@ -129,3 +129,14 @@ select option{background-color:#fff;color:#3f463e}
 :root[data-theme="dark"] .nav-shared-tag{background:#26332a;color:#9fb3a3}
 .inline-warning{color:#b5795d;font-weight:600}
 :root[data-theme="dark"] .inline-warning{color:#dda184}
+
+/* Shared-table access controls (invite dialog + Team & access). */
+.modal .invite-shared{display:flex;align-items:flex-start;gap:8px;margin:0 0 14px;padding:9px 11px;border:1px solid #e7eee6;border-radius:7px;background:#f8faf7;cursor:pointer}
+.modal .invite-shared input{width:13px;height:13px;margin-top:2px;accent-color:#315e49;flex-shrink:0}
+.modal .invite-shared span{display:block;font-size:10px;font-weight:600;color:#454b43}
+.modal .invite-shared small{display:block;font-size:9px;color:#8b9187;margin-top:2px;line-height:1.45}
+.team-shared{height:26px;padding:0 9px;font-size:9px}
+.team-shared.off{color:#9a6a52;border-color:#e9d6cb}
+:root[data-theme="dark"] .modal .invite-shared{background:#202b22;border-color:#344338}
+:root[data-theme="dark"] .modal .invite-shared span{color:#d3ddd4}
+:root[data-theme="dark"] .team-shared.off{color:#dda184;border-color:#4a322a}
