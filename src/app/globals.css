@@ -140,3 +140,93 @@ select option{background-color:#fff;color:#3f463e}
 :root[data-theme="dark"] .modal .invite-shared{background:#202b22;border-color:#344338}
 :root[data-theme="dark"] .modal .invite-shared span{color:#d3ddd4}
 :root[data-theme="dark"] .team-shared.off{color:#dda184;border-color:#4a322a}
+
+/* ---------------------------------------------------------------- mobile --- */
+/* The sidebar becomes an off-canvas drawer; the content no longer reserves
+   its 246px, and every multi-column grid collapses. */
+.nav-toggle{display:none}
+.nav-scrim{display:none}
+
+@media (max-width:900px){
+  html,body{overflow-x:hidden}
+  .nav-toggle{display:grid;place-items:center;width:32px;height:32px;flex-shrink:0;border:1px solid var(--line);border-radius:7px;background:#fff;color:#5a6357;margin-right:2px}
+  .sidebar{width:min(272px,86vw);padding:25px 16px 13px;overflow-y:auto;transform:translateX(-100%);transition:transform .22s ease;z-index:30;box-shadow:0 0 44px #0b130d40}
+  .sidebar.nav-open{transform:none}
+  .nav-scrim{display:block;position:fixed;inset:0;z-index:25;border:0;background:#0b130d66;backdrop-filter:blur(1px)}
+  .main-panel{margin-left:0;min-width:0}
+  .topbar{height:auto;min-height:56px;padding:0 12px;gap:8px}
+  .breadcrumb{min-width:0;overflow:hidden}
+  .breadcrumb b,.breadcrumb span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .search-box{display:none}
+  .content{padding:18px 14px 14px;max-width:100%}
+  .page-heading{flex-direction:column;align-items:flex-start;gap:12px}
+  .page-heading h1{font-size:23px}
+  .heading-actions{width:100%;flex-direction:row;flex-wrap:wrap}
+  .heading-actions .button{flex:1 1 auto;min-width:104px;height:34px;font-size:10px}
+  .welcome-card{height:auto;padding:18px}
+  .welcome-art{display:none}
+  .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dashboard-grid{grid-template-columns:minmax(0,1fr)}
+  .client-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .client-dash{grid-template-columns:minmax(0,1fr)}
+  .table-toolbar{height:auto;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+  .toolbar-left,.toolbar-right{flex-wrap:wrap;width:100%}
+  .toolbar-right{justify-content:flex-start}
+  .sheet-tabs{overflow-x:auto;scrollbar-width:none}
+  .sheet-tabs::-webkit-scrollbar{display:none}
+  .sheet-tabs button{flex-shrink:0}
+  .client-context{flex-wrap:wrap;padding:10px 11px}
+  .client-context>div{min-width:0}
+  .client-context>div>span{flex-wrap:wrap}
+  .sheet-summary{flex-wrap:wrap;gap:8px;margin-top:14px}
+  .table-footer{flex-wrap:wrap;gap:6px;height:auto;padding:8px 0}
+  .modal-backdrop{padding:10px}
+  .modal{width:100%;max-height:calc(100dvh - 20px)}
+  .notifications-menu{position:fixed;left:10px;right:10px;top:60px;width:auto}
+  .toast{left:12px;right:12px;bottom:12px;transform:none;justify-content:center}
+  .app-footer{flex-direction:column;align-items:flex-start;gap:6px}
+  .team-member-row{flex-wrap:wrap;gap:8px}
+  .settings-table td:last-child{white-space:normal}
+  .settings-actions{flex-wrap:wrap;gap:10px}
+  .invite-id-search{flex-wrap:wrap}
+  .invite-id-search .modal-input{flex:1 1 140px}
+}
+
+@media (max-width:560px){
+  .content{padding:14px 11px 12px}
+  .page-heading h1{font-size:21px}
+  .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+  .stat-card{padding:11px 12px 10px;min-height:92px}
+  .stat-value{font-size:20px}
+  .client-summary-grid{grid-template-columns:1fr}
+  .top-actions{gap:10px}
+  .topbar{height:56px}
+  .modal h2{font-size:17px}
+  .modal{padding:18px}
+  .profile-menu{left:auto;right:0;width:min(260px,86vw)}
+  .data-table th,.data-table td{padding:0 8px}
+}
+
+:root[data-theme="dark"] .nav-toggle{background:#19221b;border-color:#2b362e;color:#9ca99f}
+
+/* Restore the full sidebar contents inside the mobile drawer: the older
+   850px/600px rules collapse it to an icon rail by zeroing text and hiding
+   labels, which is exactly what broke the mobile layout. */
+@media (max-width:900px){
+  .sidebar .brand>span:last-child{font-size:19px}
+  .sidebar .workspace-label,.sidebar .nav-caption{font-size:9px}
+  .sidebar .workspace-switch{font-size:13px}
+  .sidebar .nav-link,.sidebar .nav-link:not(.active),.sidebar .nav-link.active{font-size:12px;justify-content:flex-start;padding:0 11px}
+  .sidebar .nav-link svg{width:17px;height:17px}
+  .sidebar .clients-caption{height:auto;margin-top:27px}
+  .sidebar .client-list{align-items:stretch}
+  .sidebar .client-link{justify-content:flex-start;padding:0 9px;width:100%}
+  .sidebar .client-link-name{display:block}
+  .sidebar .selected-dot{display:block}
+  .sidebar .new-client{display:flex}
+  .sidebar .settings-link{display:flex}
+  .sidebar .profile-copy{display:flex}
+  .sidebar .profile>svg{display:block}
+  .sidebar .profile-wrap{display:block}
+  .sidebar .profile{justify-content:flex-start;padding:3px 4px}
+}
