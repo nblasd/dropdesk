@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Activity, ArrowDown, ArrowDownToLine, ArrowLeftRight, ArrowUpRight, BadgeCheck, Bell, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, ClipboardList, Command, CreditCard, FileSpreadsheet, Filter, LayoutDashboard, Link2, ListPlus, LogOut, MoreHorizontal, Package, Pencil, Plus, Search, Settings2, ShoppingBag, Sparkles, Store, TrendingUp, Users, UserPlus, Trash2, X, type LucideIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Activity, ArrowDown, ArrowDownToLine, ArrowLeftRight, ArrowUpRight, BadgeCheck, Bell, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, ClipboardList, Command, Copy, CreditCard, FileSpreadsheet, Filter, LayoutDashboard, ListPlus, LogOut, MoreHorizontal, Package, Pencil, Plus, Search, Settings2, ShoppingBag, Sparkles, Store, TrendingUp, Users, UserPlus, Trash2, X, type LucideIcon } from "lucide-react";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 type Client = { id: string; name: string; initials: string; color: string; store: string; workspace_id?: string; user_id?: string; visibility?: "workspace"|"selected"|"private" };
@@ -12,6 +12,8 @@ type Sheet = "Overview" | string;
 type BuiltInTable = "Product hunting" | "Listings" | "Orders";
 type CustomTable = { id: string; name: string; columns: string[]; rows: Record<string, any>[] };
 type WorkspaceMember = { user_id: string; email: string; role: "owner"|"manager"|"va"|"viewer"; client_ids: string[]; joined_at: string };
+type InviteRecipient = { user_id: string; public_id: string; display_name: string };
+type IncomingInvitation = { id: string; workspace_id: string; workspace_name: string; inviter_name: string; role: "manager"|"va"|"viewer"; client_ids: string[]; created_at: string; expires_at: string };
 type WorkspaceData = Record<string, Record<string, any[]>>;
 const emptyClientData = (): WorkspaceData[string] => ({ "Product hunting": [], Listings: [], Orders: [] });
 const isLegacyDemoClient = (id: string) => /^c[123]$/.test(id) || /-c[123]$/.test(id);
@@ -46,7 +48,11 @@ export default function Home() {
   const [userEmail, setUserEmail] = useState("");
   const [authReady, setAuthReady] = useState(false);
   const [userId, setUserId] = useState<string|null>(null);
+  const [userPublicId, setUserPublicId] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [incomingInvitations, setIncomingInvitations] = useState<IncomingInvitation[]>([]);
+  const [invitationActionId, setInvitationActionId] = useState<string|null>(null);
   const [selectedRows, setSelectedRows] = useState<string[]>([]);
   const [editingRow, setEditingRow] = useState<Record<string,any>|null>(null);
   const [editDraft, setEditDraft] = useState<Record<string,any>>({});
@@ -55,27 +61,51 @@ export default function Home() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [clientBusy, setClientBusy] = useState(false);
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMember[]>([]);
+  const [workspaceMembersError, setWorkspaceMembersError] = useState("");
+  const [workspaceMembersWarning, setWorkspaceMembersWarning] = useState("");
+  const [workspaceMembersLoading, setWorkspaceMembersLoading] = useState(false);
   const [sourceFilter, setSourceFilter] = useState("All sources");
   const [userWorkspaceId, setUserWorkspaceId] = useState<string|null>(null);
   const [userRole, setUserRole] = useState<"owner"|"manager"|"va"|"viewer">("viewer");
   const [memberships,setMemberships]=useState<{workspace_id:string;role:"owner"|"manager"|"va"|"viewer"}[]>([]);
   const [selectedWorkspaceId,setSelectedWorkspaceId]=useState<string|null>(null);
-  const [inviteEmail,setInviteEmail]=useState("");
+  const [invitePublicId,setInvitePublicId]=useState("");
+  const [inviteRecipient,setInviteRecipient]=useState<InviteRecipient|null>(null);
+  const [inviteLookupBusy,setInviteLookupBusy]=useState(false);
   const [inviteRole,setInviteRole]=useState<"manager"|"va"|"viewer">("va");
   const [inviteClients,setInviteClients]=useState<string[]>([]);
-  const [inviteToken,setInviteToken]=useState("");
   const [inviteBusy,setInviteBusy]=useState(false);
+  const canWriteWorkspace = !userEmail || userRole !== "viewer";
   const visibleClients = selectedWorkspaceId ? clients.filter(c=>c.workspace_id===selectedWorkspaceId) : clients;
   const visibleData:WorkspaceData = selectedWorkspaceId ? Object.fromEntries(visibleClients.map(c=>[c.id,data[c.id]??emptyClientData()])) : data;
   const current = visibleClients.find(c=>c.id===active) ?? visibleClients[0];
   useEffect(()=>{if(current&&current.id!==active)setActive(current.id)},[current?.id,active]);
   useEffect(()=>{const workspaceId=current?.workspace_id??selectedWorkspaceId;const membership=memberships.find(m=>m.workspace_id===workspaceId);if(membership){setUserWorkspaceId(membership.workspace_id);setUserRole(membership.role);if(workspaceId!==selectedWorkspaceId)setSelectedWorkspaceId(workspaceId)}},[current?.workspace_id,selectedWorkspaceId,memberships]);
-  const acceptInviteFromUrl=async(sb:SupabaseClient):Promise<string|null>=>{
-    const token=new URLSearchParams(window.location.search).get("invite");if(!token)return null;
-    const {data,error}=await sb.rpc("accept_workspace_invitation",{p_token:token});
-    if(error){toast("This invitation is invalid, expired, or belongs to another email address.");return null}
-    const url=new URL(window.location.href);url.searchParams.delete("invite");window.history.replaceState({},"",url.toString());toast("You joined the invited workspace");return typeof data==="string"?data:null;
-  };
+  const refreshWorkspaceMembers=useCallback(async(sb:SupabaseClient,workspaceId:string)=>{
+    setWorkspaceMembersLoading(true);
+    setWorkspaceMembersError("");
+    setWorkspaceMembersWarning("");
+    try{
+      const {data,error}=await sb.rpc("list_workspace_members",{p_workspace_id:workspaceId});
+      if(!error&&Array.isArray(data)&&data.length){
+        setWorkspaceMembers(data as WorkspaceMember[]);
+        return;
+      }
+      // Keep the owner panel usable if an older deployed RPC returns no rows.
+      const {data:rows,error:membersError}=await sb.from("workspace_members")
+        .select("user_id,role,created_at").eq("workspace_id",workspaceId).order("created_at");
+      if(!membersError&&rows?.length){
+        setWorkspaceMembers(rows.map((member:any)=>({user_id:member.user_id,email:"",role:member.role,client_ids:[],joined_at:member.created_at})) as WorkspaceMember[]);
+        setWorkspaceMembersWarning(error?`Limited member details loaded (RPC error ${error.code??"unknown"}).`:"The member details RPC returned no rows; showing basic memberships.");
+        return;
+      }
+      setWorkspaceMembers([]);
+      setWorkspaceMembersError(membersError?.message??error?.message??"No members were returned for this workspace.");
+    }catch(error){
+      setWorkspaceMembers([]);
+      setWorkspaceMembersError(error instanceof Error?error.message:"Could not load workspace members.");
+    }finally{setWorkspaceMembersLoading(false)}
+  },[]);
 
   useEffect(()=>{
     try {
@@ -94,7 +124,30 @@ export default function Home() {
         localStorage.setItem("dropdesk-demo", JSON.stringify({ clients: savedClients, data: savedData, customTables: savedTables, active: initialActive }));
       }
       const u=process.env.NEXT_PUBLIC_SUPABASE_URL, k=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-      if(u&&k){const sb=createClient(u,k); setSupabase(sb); sb.auth.getUser().then(async ({data:{user}})=>{if(user?.email){setUserEmail(user.email);const invitedWorkspaceId=await acceptInviteFromUrl(sb);if(await loadWorkspace(sb,user.id,invitedWorkspaceId))setUserId(user.id)}}).finally(()=>setAuthReady(true));} else setAuthReady(true);
+      if(!u||!k){setAuthReady(true);return}
+      const sb=createClient(u,k); setSupabase(sb);
+      (async()=>{
+        try{
+          const {data:{session}}=await sb.auth.getSession();
+          // No stored session: this is a normal signed-out visitor, not an error.
+          if(!session)return;
+          const {data,error}=await sb.auth.getUser();
+          const user=data?.user;
+          if(!user||error){
+            const detail={code:(error as {code?:string}|null)?.code,name:(error as {name?:string}|null)?.name,status:(error as {status?:number}|null)?.status,message:(error as {message?:string}|null)?.message};
+            // 401/403 means the stored token is dead (expired, or the account was deleted).
+            // Drop it so the visitor can sign in instead of being stuck erroring on every load.
+            if(detail.status===401||detail.status===403){
+              console.warn("[Dropdesk][auth.restore] stale session cleared",detail);
+              try{await sb.auth.signOut({scope:"local"})}catch{}
+            }else console.warn("[Dropdesk][auth.restore] could not verify session",detail);
+            return;
+          }
+          if(user.email){setUserEmail(user.email);if(await loadWorkspace(sb,user.id))setUserId(user.id)}
+        }catch(error){
+          console.warn("[Dropdesk][auth.restore] failed",{name:(error as {name?:string})?.name,message:error instanceof Error?error.message:String(error)});
+        }finally{setAuthReady(true)}
+      })();
     } catch { setAuthReady(true); }
   },[]);
   useEffect(()=>{setSelectedRows([])},[active,sheet]);
@@ -113,23 +166,23 @@ export default function Home() {
   },[supabase,userId,clients,data,customTables]);
   const loadWorkspace=async(sb:SupabaseClient, uid:string, preferredWorkspaceId?:string|null):Promise<boolean>=>{
     const clientResult=await sb.from("clients").select("id,name,initials,color,store,workspace_id,user_id,visibility").is("archived_at",null);
-    const [rowResult,tableResult,membershipResult]=await Promise.all([sb.from("workspace_rows").select("id,user_id,client_id,sheet,payload").is("deleted_at",null),sb.from("workspace_tables").select("id,client_id,name,columns,rows").is("deleted_at",null),sb.from("workspace_members").select("workspace_id,role").eq("user_id",uid).order("created_at")]);
-    if(clientResult.error||rowResult.error||membershipResult.error){toast("Could not load your workspace access. Apply the workspace access migrations in Supabase.");return false}
+    const [rowResult,tableResult,membershipResult,profileResult]=await Promise.all([sb.from("workspace_rows").select("id,user_id,client_id,sheet,payload").is("deleted_at",null),sb.from("workspace_tables").select("id,client_id,name,columns,rows").is("deleted_at",null),sb.from("workspace_members").select("workspace_id,role").eq("user_id",uid).order("created_at"),sb.from("user_profiles").select("public_id").eq("user_id",uid).maybeSingle()]);
+    if(profileResult.error)console.error("[Dropdesk][profile.load] failed",{code:profileResult.error.code,message:profileResult.error.message,details:profileResult.error.details,hint:profileResult.error.hint});
+    setUserPublicId(profileResult.data?.public_id??"");
+    if(clientResult.error||rowResult.error||membershipResult.error){console.error("[Dropdesk][workspace.load] failed",{userId:uid,clients:clientResult.error&&{code:clientResult.error.code,message:clientResult.error.message,details:clientResult.error.details,hint:clientResult.error.hint},rows:rowResult.error&&{code:rowResult.error.code,message:rowResult.error.message,details:rowResult.error.details,hint:rowResult.error.hint},memberships:membershipResult.error&&{code:membershipResult.error.code,message:membershipResult.error.message,details:membershipResult.error.details,hint:membershipResult.error.hint}});toast("Could not load your workspace access. Apply the workspace access migrations in Supabase.");return false}
     const loadedMemberships=(membershipResult.data??[]) as {workspace_id:string;role:"owner"|"manager"|"va"|"viewer"}[];
     setMemberships(loadedMemberships);
     const workspaceIds=loadedMemberships.map(m=>m.workspace_id);
     const ownerWorkspace=loadedMemberships.find(m=>m.role==="owner");
-    const initialWorkspaceId=(preferredWorkspaceId&&workspaceIds.includes(preferredWorkspaceId)?preferredWorkspaceId:null)??ownerWorkspace?.workspace_id??workspaceIds[0]??null;
+    const savedWorkspaceId=typeof window!=="undefined"?localStorage.getItem("dropdesk-selected-workspace"):null;
+    const initialWorkspaceId=(preferredWorkspaceId&&workspaceIds.includes(preferredWorkspaceId)?preferredWorkspaceId:null)??(savedWorkspaceId&&workspaceIds.includes(savedWorkspaceId)?savedWorkspaceId:null)??ownerWorkspace?.workspace_id??workspaceIds[0]??null;
     if(!initialWorkspaceId){setWorkspaceMembers([]);toast("This account has no workspace yet. Apply the workspace repair migration in Supabase, then reload.");return false}
     const initialRole=loadedMemberships.find(m=>m.workspace_id===initialWorkspaceId)?.role??"viewer";
-    setUserWorkspaceId(initialWorkspaceId);setUserRole(initialRole);setSelectedWorkspaceId(initialWorkspaceId);
+    setUserWorkspaceId(initialWorkspaceId);setUserRole(initialRole);setSelectedWorkspaceId(initialWorkspaceId);if(typeof window!=="undefined")localStorage.setItem("dropdesk-selected-workspace",initialWorkspaceId);
     if(tableResult.error)toast("Custom table cloud sync needs the workspace_tables migration in Supabase.");
     const allClients = (clientResult.data ?? []) as Client[];
-    if(initialRole==="owner"){
-      const {data:memberRows,error:memberError}=await sb.rpc("list_workspace_members",{p_workspace_id:initialWorkspaceId});
-      if(memberError)toast("Could not load workspace members. Apply the latest workspace access migration.");
-      setWorkspaceMembers((memberRows??[]) as WorkspaceMember[]);
-    }else setWorkspaceMembers([]);
+    if(initialRole==="owner") await refreshWorkspaceMembers(sb,initialWorkspaceId);
+    else {setWorkspaceMembers([]);setWorkspaceMembersError("");setWorkspaceMembersWarning("")}
       const remoteClients = allClients.map(client=>!client.workspace_id&&client.user_id===uid&&initialRole==="owner"?{...client,workspace_id:initialWorkspaceId}:client);
       if (!remoteClients.length) {
         setClients([]);
@@ -146,6 +199,23 @@ export default function Home() {
       tableResult.data?.forEach((table:any)=>{if(next[table.client_id]){(nextTables[table.client_id]??=[]).push({id:table.id,name:table.name,columns:Array.isArray(table.columns)?table.columns:[],rows:Array.isArray(table.rows)?table.rows:[]})}});
       setClients(remoteClients);setData(next);setCustomTables(nextTables);setActive(remoteClients[0].id);return true;
   };
+  const refreshIncomingInvitations=useCallback(async()=>{
+    if(!supabase||!userId)return;
+    const {data,error}=await supabase.rpc("list_my_workspace_invitations");
+    if(error){console.error("[Dropdesk][notifications.load] failed",{code:error.code,message:error.message,details:error.details,hint:error.hint});return}
+    setIncomingInvitations((data??[]) as IncomingInvitation[]);
+  },[supabase,userId]);
+  useEffect(()=>{
+    if(!supabase||!userId)return;
+    void refreshIncomingInvitations();
+    const timer=window.setInterval(()=>void refreshIncomingInvitations(),30000);
+    return()=>window.clearInterval(timer);
+  },[supabase,userId,refreshIncomingInvitations]);
+  useEffect(()=>{
+    if(sheet==="Settings"&&userRole==="owner"&&supabase&&selectedWorkspaceId){
+      void refreshWorkspaceMembers(supabase,selectedWorkspaceId);
+    }
+  },[sheet,userRole,supabase,selectedWorkspaceId,refreshWorkspaceMembers]);
   const items = current ? data[current.id] : undefined;
   const activeCustomTables=current?customTables[current.id]??[]:[];
   const customTable=activeCustomTables.find(t=>t.id===sheet);
@@ -159,13 +229,14 @@ export default function Home() {
   const allOrders = Object.values(visibleData).flatMap(d=>d.Orders||[]);
   const orderProfit = allOrders.reduce((a,r)=>a+r.profit,0);
   const setRows = (name:string, next:any[])=>{
-    if(userEmail&&userRole==="viewer"){toast("Your role is read-only");return}
+    if(!canWriteWorkspace){toast("Your role is read-only");return false}
     if(!(customTable&&name===customTable.id)&&supabase&&userId){
       const prior=data[active]?.[name]??[];const remaining=new Set(next.map(row=>String(row.__rowId??row.id)));
       const removed=prior.map(row=>String(row.__rowId??row.id)).filter(id=>!remaining.has(id));
       if(removed.length)void supabase.from("workspace_rows").update({deleted_at:new Date().toISOString(),deleted_by:userId}).eq("client_id",active).in("id",removed);
     }
     customTable&&name===customTable.id?setCustomTables(prev=>({...prev,[active]:(prev[active]??[]).map(t=>t.id===name?{...t,rows:next}:t)})):setData(prev=>({...prev,[active]:{...prev[active], [name]:next}}));
+    return true;
   };
   const addClient = async()=>{
     const name=clientName.trim(); if(!name)return;
@@ -213,6 +284,7 @@ export default function Home() {
   };
   const toast=(s:string)=>{setNotice(s);setTimeout(()=>setNotice(""),2600)};
   const addProduct=()=>{
+    if(!canWriteWorkspace)return toast("Your role is read-only");
     const title=productName.trim();
     const sourceUrl=productSourceUrl.trim();
     const cost=Number(supplierCost);
@@ -225,6 +297,7 @@ export default function Home() {
     setProductName("");setProductSourceUrl("");setProductSource("AliExpress");setSupplierCost("");setEbayPrice("");setModal(null);toast("Product added to product hunting");
   };
   const createTableFromImport=async()=>{
+    if(!canWriteWorkspace){toast("Your role is read-only");return}
     if(!active||!current){toast("Create or select a client before importing a table");return}
     setImportBusy(true);
     try{
@@ -241,6 +314,7 @@ export default function Home() {
     }catch(error){toast(error instanceof Error?error.message:"Spreadsheet import failed")}finally{setImportBusy(false)}
   };
   const addRow=()=>{
+    if(!canWriteWorkspace)return toast("Your role is read-only");
     if(sheet==="Overview")return;
     if(sheet==="Product hunting"){setModal("product");return}
     if(customTable){const row={__rowId:`${sheet}-row-${Date.now()}`,...Object.fromEntries(customTable.columns.map(column=>[column,""]))};setRows(sheet,[row,...rows]);toast("New row added");return}
@@ -250,19 +324,21 @@ export default function Home() {
     const newRow = targetSheet==="Product hunting" ? {id,title:"New product idea",source:"AliExpress",cost:0,price:0,profit:0,margin:0,status:"Researching",date} : targetSheet==="Listings" ? {id,title:"New eBay listing",source:"AliExpress",price:0,sku:"NEW-001",status:"Draft",date} : {id,sourceId:"",source:"AliExpress",item:"New order",cost:0,sale:0,fee:0,profit:0,status:"Processing",date};
     setRows(targetSheet,[newRow,...rows]); toast("New row added");
   };
-  const beginEditRow=(row:Record<string,any>)=>{setEditingRow(row);setEditDraft({...row});setModal("edit")};
+  const beginEditRow=(row:Record<string,any>)=>{if(!canWriteWorkspace)return toast("Your role is read-only");setEditingRow(row);setEditDraft({...row});setModal("edit")};
   const saveEditedRow=()=>{
+    if(!canWriteWorkspace)return toast("Your role is read-only");
     if(!editingRow)return;
     const key=rowKey(editingRow);const nextDraft={...editDraft};
     if(!customTable&&sheet==="Product hunting"){nextDraft.profit=+(nextDraft.price*.87-nextDraft.cost).toFixed(2);nextDraft.margin=nextDraft.price?Math.round(nextDraft.profit/nextDraft.price*100):0}
     if(!customTable&&sheet==="Orders")nextDraft.profit=+(nextDraft.sale-nextDraft.cost-nextDraft.fee).toFixed(2);
     setRows(sheet,rows.map(row=>rowKey(row)===key?nextDraft:row));setSelectedRows(current=>current.filter(id=>id!==key));setEditingRow(null);setEditDraft({});setModal(null);toast("Row updated");
   };
-  const deleteSelectedRows=()=>{if(!selectedRows.length)return;setRows(sheet,rows.filter(row=>!selectedRows.includes(rowKey(row))));setSelectedRows([]);toast("Selected rows deleted")};
+  const deleteSelectedRows=()=>{if(!selectedRows.length)return;if(!canWriteWorkspace)return toast("Your role is read-only");setRows(sheet,rows.filter(row=>!selectedRows.includes(rowKey(row))));setSelectedRows([]);toast("Selected rows deleted")};
   const toggleRowSelection=(key:string)=>setSelectedRows(current=>current.includes(key)?current.filter(id=>id!==key):[...current,key]);
   const allVisibleSelected=filtered.length>0&&filtered.every((row:any)=>selectedRows.includes(rowKey(row)));
   const toggleVisibleSelection=()=>setSelectedRows(allVisibleSelected?current=>current.filter(id=>!filtered.some((row:any)=>rowKey(row)===id)):Array.from(new Set([...selectedRows,...filtered.map((row:any)=>rowKey(row))])));
   const updateCell=(rowIndex:number,key:string,value:string)=>{
+    if(!canWriteWorkspace)return toast("Your role is read-only");
     if(sheet==="Overview")return;
     const targetSheet=sheet;
     const next=[...rows]; const old={...next[rowIndex]};
@@ -279,18 +355,48 @@ export default function Home() {
     const headers=customTable?customTable.columns:Object.keys(rows[0]).filter(h=>h!=="id"); const csv=[headers.join(","),...rows.map((r:any)=>headers.map(h=>`"${String(r[h]??"").replaceAll('"','""')}"`).join(","))].join("\r\n");
     const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`${current?.name??"workspace"}-${(customTable?.name??sheet).toLowerCase().replaceAll(" ","-")}.csv`;a.click();URL.revokeObjectURL(a.href);toast("Spreadsheet export downloaded");
   };
-  const submitAuth=async(e:React.FormEvent)=>{e.preventDefault();if(!authEmail.includes("@"))return toast("Enter a valid email address");if(authPassword.length<8)return toast("Use a password with at least 8 characters");if(authMode==="signup"&&!authName.trim())return toast("Enter your name");if(!supabase)return toast("Connect Supabase to create a secure account");setAuthBusy(true);try{const result=authMode==="signup"?await supabase.auth.signUp({email:authEmail,password:authPassword,options:{data:{full_name:authName.trim(),name:authName.trim()},emailRedirectTo:window.location.origin}}):await supabase.auth.signInWithPassword({email:authEmail,password:authPassword});if(result.error)return toast(result.error.message);const user=result.data.user;if(result.data.session&&user){setUserEmail(user.email??authEmail);const invitedWorkspaceId=await acceptInviteFromUrl(supabase);if(await loadWorkspace(supabase,user.id,invitedWorkspaceId))setUserId(user.id);setModal(null);toast(authMode==="signup"?"Your account is ready":"You’re signed in");}else if(authMode==="signup"){setModal(null);toast("Account created. If email confirmation is enabled, use the link in your inbox.");}else toast("Sign-in did not return an active session");}finally{setAuthBusy(false);}};
+  const submitAuth=async(e:React.FormEvent)=>{e.preventDefault();if(!authEmail.includes("@"))return toast("Enter a valid email address");if(authPassword.length<8)return toast("Use a password with at least 8 characters");if(authMode==="signup"&&!authName.trim())return toast("Enter your name");if(!supabase)return toast("Connect Supabase to create a secure account");setAuthBusy(true);try{const result=authMode==="signup"?await supabase.auth.signUp({email:authEmail,password:authPassword,options:{data:{full_name:authName.trim(),name:authName.trim()},emailRedirectTo:window.location.origin}}):await supabase.auth.signInWithPassword({email:authEmail,password:authPassword});if(result.error){console.error("[Dropdesk][auth.submit] failed",{mode:authMode,message:result.error.message,status:result.error.status,code:result.error.code,email:authEmail});return toast(result.error.message)}const user=result.data.user;if(result.data.session&&user){setUserEmail(user.email??authEmail);if(await loadWorkspace(supabase,user.id))setUserId(user.id);setModal(null);toast(authMode==="signup"?"Your account is ready":"You’re signed in");}else if(authMode==="signup"){setModal(null);toast("Account created. If email confirmation is enabled, use the link in your inbox.");}else toast("Sign-in did not return an active session");}finally{setAuthBusy(false);}};
   const continueWithGoogle=async()=>{if(!supabase)return toast("Connect Supabase to enable Google sign-in");const {error}=await supabase.auth.signInWithOAuth({provider:"google",options:{redirectTo:window.location.origin}});if(error)toast(error.message);};
+  const findInviteRecipient=async()=>{
+    if(!supabase)return toast("Connect Supabase to look up a user");
+    const code=invitePublicId.trim().toUpperCase();if(!code)return toast("Enter their Dropdesk ID");
+    setInviteLookupBusy(true);setInviteRecipient(null);
+    try{
+      const {data,error}=await supabase.rpc("lookup_user_by_public_id",{p_public_id:code});
+      if(error)throw error;
+      const recipient=Array.isArray(data)?data[0] as InviteRecipient|undefined:undefined;
+      if(!recipient){toast("No user was found with that Dropdesk ID");return}
+      setInviteRecipient(recipient);
+    }catch(error){console.error("[Dropdesk][invite.lookup] failed",{code:(error as {code?:string})?.code,message:error instanceof Error?error.message:String(error)});toast(error instanceof Error?error.message:"Could not find that user")}
+    finally{setInviteLookupBusy(false)}
+  };
   const createInvitation=async()=>{
     const workspaceId=current?.workspace_id??selectedWorkspaceId??userWorkspaceId;
+    const workspaceClientIds=new Set(visibleClients.filter(client=>client.workspace_id===workspaceId).map(client=>client.id));
+    const selectedClientIds=inviteClients.filter(clientId=>workspaceClientIds.has(clientId));
     if(userRole!=="owner")return toast("Only a workspace owner can invite teammates");
     if(!supabase||!workspaceId)return toast("Could not identify the workspace for this invitation");
-    if(!inviteEmail.includes("@"))return toast("Enter a valid email address");
+    if(!inviteRecipient)return toast("Find a user by their Dropdesk ID first");
     setInviteBusy(true);
-    try{const {data,error}=await supabase.rpc("create_workspace_invitation",{p_workspace_id:workspaceId,p_email:inviteEmail.trim(),p_role:inviteRole,p_client_ids:inviteClients});if(error||typeof data!=="string")throw new Error(error?.message??"Could not create the invitation. Check the workspace migration and your owner role.");setInviteToken(data);toast("Invitation link created");}
-    catch(error){toast(error instanceof Error?error.message:"Could not create invitation");}
+    try{const {error}=await supabase.rpc("send_workspace_invitation",{p_workspace_id:workspaceId,p_recipient_public_id:inviteRecipient.public_id,p_role:inviteRole,p_client_ids:selectedClientIds});if(error)throw error;setModal(null);toast(`Invitation sent to ${inviteRecipient.display_name}`)}
+    catch(error){console.error("[Dropdesk][invite.create] failed",{code:(error as {code?:string})?.code,message:error instanceof Error?error.message:String(error),workspaceId,recipientPublicId:inviteRecipient.public_id,role:inviteRole,clientIds:selectedClientIds});toast(error instanceof Error?error.message:"Could not send invitation")}
     finally{setInviteBusy(false)}
   };
+  const respondToInvitation=async(invitation:IncomingInvitation,action:"accept"|"decline")=>{
+    if(!supabase||!userId)return;
+    setInvitationActionId(invitation.id);
+    try{
+      const {data,error}=await supabase.rpc(action==="accept"?"accept_workspace_invitation":"decline_workspace_invitation",{p_invitation_id:invitation.id});
+      if(error)throw error;
+      setIncomingInvitations(previous=>previous.filter(item=>item.id!==invitation.id));
+      if(action==="accept"){
+        if(typeof data!=="string"||!await loadWorkspace(supabase,userId,data))throw new Error("You joined, but the workspace could not be loaded. Reload the page.");
+        toast(`Joined ${invitation.workspace_name}`);
+      }else toast("Invitation declined");
+    }catch(error){console.error(`[Dropdesk][invite.${action}] failed`,{code:(error as {code?:string})?.code,message:error instanceof Error?error.message:String(error),invitationId:invitation.id});toast(error instanceof Error?error.message:`Could not ${action} invitation`)}
+    finally{setInvitationActionId(null)}
+  };
+  const copyPublicId=async()=>{if(!userPublicId)return toast("Your Dropdesk ID is not available yet");try{await navigator.clipboard.writeText(userPublicId);toast("Your Dropdesk ID was copied")}catch{toast(`Your Dropdesk ID is ${userPublicId}`)}};
   const revokeMember=async(member:WorkspaceMember)=>{
     const workspaceId=selectedWorkspaceId??userWorkspaceId;
     if(!supabase||!workspaceId)return toast("Could not identify the workspace");
@@ -303,8 +409,7 @@ export default function Home() {
       toast("Workspace access removed");
     }catch(error){toast(error instanceof Error?error.message:"Could not remove workspace access")}
   };
-  const copyInvitation=async()=>{const link=`${window.location.origin}/?invite=${encodeURIComponent(inviteToken)}`;try{await navigator.clipboard.writeText(link);toast("Invitation link copied");}catch{toast("Copy failed; select and copy the invitation link")}};
-  const signOut=async()=>{if(supabase)await supabase.auth.signOut();setUserId(null);setUserEmail("");setClients([]);setData({});setCustomTables({});setWorkspaceMembers([]);setMemberships([]);setUserWorkspaceId(null);setSelectedWorkspaceId(null);setUserRole("viewer");setActive("");setSheet("Overview");setMenuOpen(false);toast("Signed out");};
+  const signOut=async()=>{if(supabase)await supabase.auth.signOut();setUserId(null);setUserEmail("");setUserPublicId("");setIncomingInvitations([]);setClients([]);setData({});setCustomTables({});setWorkspaceMembers([]);setMemberships([]);setUserWorkspaceId(null);setSelectedWorkspaceId(null);setUserRole("viewer");setActive("");setSheet("Overview");setMenuOpen(false);setNotificationsOpen(false);toast("Signed out");};
 
   if (!authReady) return <main className="landing-loading"><span className="brand-mark"><ArrowLeftRight size={19} strokeWidth={2.4}/></span><b>dropdesk<span className="brand-dot">.</span></b></main>;
 
@@ -317,7 +422,7 @@ export default function Home() {
       <div className="nav-group"><div className="nav-caption">MENU</div>
         <button className={`nav-link ${sheet==="Overview"?"active":""}`} onClick={()=>setSheet("Overview")}><LayoutDashboard size={17}/>Overview</button>
         <div className="workspace-table-menu">{(["Product hunting","Listings","Orders"] as BuiltInTable[]).map(name=><button key={name} className={`nav-link ${sheet===name?"active":""}`} disabled={!current} onClick={()=>{if(!current)return;setSheet(name)}}>{name==="Product hunting"?<Package size={17}/>:name==="Listings"?<ClipboardList size={17}/>:<ShoppingBag size={17}/>}<span>{name}</span></button>)}</div>
-        {userRole==="owner"&&<button className="nav-link invite-nav" onClick={()=>{setInviteEmail("");setInviteRole("va");setInviteClients([]);setInviteToken("");setModal("invite")}}><UserPlus size={17}/>Invite teammate</button>}
+        {userRole==="owner"&&<button className="nav-link invite-nav" onClick={()=>{setInvitePublicId("");setInviteRecipient(null);setInviteRole("va");setInviteClients([]);setModal("invite")}}><UserPlus size={17}/>Invite teammate</button>}
         {userRole==="owner"&&<button className={`nav-link ${sheet==="Settings"?"active":""}`} onClick={()=>setSheet("Settings")}><Users size={17}/>Team &amp; access</button>}
         <div className="nav-caption clients-caption"><span>YOUR CLIENTS</span>{userRole==="owner"&&<button className="tiny-add" onClick={()=>setModal("client")} aria-label="Add client"><Plus size={15}/></button>}</div>
         <div className="client-list">{visibleClients.map(c=><div className="client-nav-group" key={c.id}><button className={`client-link ${active===c.id?"selected":""}`} onClick={()=>{setActive(c.id);setSheet("Overview");setQuery("")}}><span className="client-avatar" style={{background:c.color}}>{c.initials}</span><span className="client-link-name">{c.name}</span></button></div>)}</div>
@@ -325,11 +430,11 @@ export default function Home() {
       </div>
       <div className="sidebar-bottom">
         <button className={`nav-link settings-link ${sheet==="Settings"?"active":""}`} onClick={()=>{setSheet("Settings");setMenuOpen(false)}}><Settings2 size={17}/>Settings</button>
-        <div className="profile-wrap"><button className="profile" onClick={()=>setMenuOpen(!menuOpen)}><span className="profile-avatar">{userEmail?userEmail.slice(0,2).toUpperCase():"G"}</span><span className="profile-copy"><b>{userEmail?userEmail.split("@")[0]:"Guest preview"}</b><small>{userEmail||"Sign in to save your workspace"}</small></span><MoreHorizontal size={17}/></button>{menuOpen&&<div className="profile-menu">{userEmail?<button onClick={signOut}><LogOut size={15}/> Sign out</button>:<button onClick={()=>{setModal("auth");setMenuOpen(false)}}><BadgeCheck size={15}/> Sign in / create account</button>}</div>}</div>
+        <div className="profile-wrap"><button className="profile" onClick={()=>setMenuOpen(!menuOpen)}><span className="profile-avatar">{userEmail?userEmail.slice(0,2).toUpperCase():"G"}</span><span className="profile-copy"><b>{userEmail?userEmail.split("@")[0]:"Guest preview"}</b><small>{userEmail||"Sign in to save your workspace"}</small></span><MoreHorizontal size={17}/></button>{menuOpen&&<div className="profile-menu">{userEmail?<><div className="profile-public-id"><small>YOUR DROPDESK ID</small><b>{userPublicId||"Unavailable"}</b></div><button onClick={copyPublicId}><Copy size={15}/> Copy Dropdesk ID</button><button onClick={signOut}><LogOut size={15}/> Sign out</button></>:<button onClick={()=>{setModal("auth");setMenuOpen(false)}}><BadgeCheck size={15}/> Sign in / create account</button>}</div>}</div>
       </div>
     </aside>
     <section className="main-panel">
-      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14}/><span>{sheet==="Overview"?"Overview":sheet==="Settings"?"Settings":current?.name}</span>{sheet!=="Overview"&&sheet!=="Settings"&&<><ChevronRight size={14}/><b>{displaySheet}</b></>}</div><div className="top-actions"><div className="search-box"><Search size={16}/><input placeholder="Search anything..." value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌘ K</kbd></div><button className="icon-button" onClick={()=>toast("You’re all caught up")} aria-label="Notifications"><Bell size={17}/><span className="notification-dot"/></button><span className="top-divider"/><button className="help-button" onClick={()=>toast("Help center coming soon")}><CircleHelp size={16}/>Help</button></div></header>
+      <header className="topbar"><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14}/><span>{sheet==="Overview"?"Overview":sheet==="Settings"?"Settings":current?.name}</span>{sheet!=="Overview"&&sheet!=="Settings"&&<><ChevronRight size={14}/><b>{displaySheet}</b></>}</div><div className="top-actions"><div className="search-box"><Search size={16}/><input placeholder="Search anything..." value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌘ K</kbd></div><div className="notification-wrap"><button className="icon-button" onClick={()=>{const opening=!notificationsOpen;setNotificationsOpen(opening);if(opening)void refreshIncomingInvitations()}} aria-label={`Notifications${incomingInvitations.length?`, ${incomingInvitations.length} pending`:""}`} aria-expanded={notificationsOpen}><Bell size={17}/>{incomingInvitations.length>0&&<span className="notification-count">{incomingInvitations.length>9?"9+":incomingInvitations.length}</span>}</button>{notificationsOpen&&<div className="notifications-menu"><div className="notifications-heading"><div><b>Notifications</b><small>{incomingInvitations.length?`${incomingInvitations.length} pending invitation${incomingInvitations.length===1?"":"s"}`:"You're all caught up"}</small></div><button onClick={()=>void refreshIncomingInvitations()} aria-label="Refresh notifications">Refresh</button></div>{incomingInvitations.length?incomingInvitations.map(invitation=><article className="invitation-notification" key={invitation.id}><b>{invitation.inviter_name} invited you</b><span>{invitation.workspace_name} · {invitation.role}</span><small>{invitation.client_ids.length?`${invitation.client_ids.length} selected client${invitation.client_ids.length===1?"":"s"}`:"No selected clients"}</small><div><button className="button secondary" disabled={invitationActionId===invitation.id} onClick={()=>void respondToInvitation(invitation,"decline")}>Decline</button><button className="button primary" disabled={invitationActionId===invitation.id} onClick={()=>void respondToInvitation(invitation,"accept")}>{invitationActionId===invitation.id?"Working…":"Accept"}</button></div></article>):<p className="notifications-empty">Workspace invitations will appear here.</p>}</div>}</div><span className="top-divider"/><button className="help-button" onClick={()=>toast("Help center coming soon")}><CircleHelp size={16}/>Help</button></div></header>
       <div className="content">
         {!userEmail&&<div className="guest-banner"><span className="guest-badge"><Sparkles size={14}/> PREVIEW</span><span className="guest-message"><b>Your workspace starts empty.</b> Create a free account to save the clients, listings, and orders you add.</span><button className="button primary guest-cta" onClick={()=>setModal("auth")}>Create free account <ArrowUpRight size={14}/></button></div>}
         <div className="page-heading"><div><div className="eyebrow">{sheet==="Overview"?"YOUR WORKSPACE":sheet==="Settings"?"WORKSPACE":"CLIENT WORKSPACE"} <span className="eyebrow-line"/></div><h1>{sheet==="Overview"?(userEmail?`Welcome back, ${userEmail.split("@")[0]} `:"Your dropshipping workspace "):sheet==="Settings"?"Settings":displaySheet}{sheet==="Overview"&&<span className="wave">✳</span>}</h1><p className="subheading">{sheet==="Overview"?(clients.length?"Here’s what’s happening across your client accounts today.":"Add your first client to start organizing your work."):sheet==="Settings"?"Rename a client, update their store details, or remove a client and everything stored for them.":`${current?.name} · ${current?.store}`}</p></div><div className="heading-actions">{sheet!=="Overview"&&sheet!=="Settings"&&<button className="button secondary" onClick={exportCsv}><ArrowDownToLine size={15}/> Export</button>}{current&&sheet!=="Settings"&&<button className="button secondary" onClick={()=>{setImportName("");setImportFile(null);setModal("import")}}><FileSpreadsheet size={15}/> Import CSV</button>}{userRole==="owner"&&(sheet==="Overview"||sheet==="Settings")&&<button className="button primary" onClick={()=>setModal("client")} disabled={clientBusy}><Plus size={16}/> Add client</button>}{sheet!=="Overview"&&sheet!=="Settings"&&<button className="button primary" onClick={addRow}><Plus size={16}/>{customTable?"Add row":sheet==="Listings"?"Add listing":sheet==="Orders"?"Add order":"Add product"}</button>}</div></div>
@@ -340,7 +445,7 @@ export default function Home() {
           <div className="stats-grid"><StatCard label="Active clients" value={String(visibleClients.length).padStart(2,"0")} change="All accounts" icon={<Users size={17}/>} tone="mint"/><StatCard label="Orders this month" value={String(allOrders.length).padStart(2,"0")} change="Across all clients" icon={<ShoppingBag size={17}/>} tone="peach"/><StatCard label="Net profit" value={money(orderProfit)} change="After marketplace fees" icon={<TrendingUp size={17}/>} tone="lavender"/><StatCard label="Active listings" value={String(Object.values(visibleData).flatMap(d=>d.Listings||[]).length).padStart(2,"0")} change="Across all stores" icon={<Store size={17}/>} tone="yellow"/></div>
           <div className="dashboard-grid"><section className="panel clients-panel"><div className="panel-heading"><div><h3>Your clients</h3><p>Open a client workspace.</p></div><button className="text-button" onClick={()=>setModal("client")}>Add client <Plus size={14}/></button></div><div className="client-table-wrap">{visibleClients.length?<table className="client-table"><thead><tr><th>CLIENT</th><th>STORE</th><th>ORDERS</th><th>NET PROFIT</th><th/></tr></thead><tbody>{visibleClients.slice(0,4).map((c,i)=>{const d=visibleData[c.id];const ord=d?.Orders?.length??0;const prof=d?.Orders?.reduce((a:any,o:any)=>a+o.profit,0)??0;return <tr key={c.id} onClick={()=>{setActive(c.id);setSheet("Overview");setQuery("")}}><td><span className="table-client"><span className="client-avatar" style={{background:c.color}}>{c.initials}</span><span><b>{c.name}</b><small>Open workspace</small></span></span></td><td className="store-cell"><span className="store-icon"><Store size={14}/></span>{c.store}</td><td>{ord||"—"}</td><td className="profit-cell">{prof?money(prof):"—"}</td><td><button className="row-more" aria-label="Open client workspace" onClick={e=>{e.stopPropagation();setActive(c.id);setSheet("Overview")}}><ArrowUpRight size={15}/></button></td></tr>})}</tbody></table>:<EmptyState title="No clients yet" text="Create your first client workspace to get started." actionLabel="Add a client" onClick={()=>setModal("client")}/>}</div><button className="add-client-row" onClick={()=>setModal("client")}><Plus size={15}/> Add another client</button></section>
             <section className="panel activity-panel"><div className="panel-heading"><div><h3>Recent activity</h3><p>Latest across your accounts.</p></div><button className="more-round" onClick={()=>toast("Activity history coming soon")}><MoreHorizontal size={17}/></button></div><div className="activity-list"><div className="empty-state"><span className="empty-icon"><FileSpreadsheet size={18}/></span><b>No activity yet</b><p>Your updates will appear here after you add clients and orders.</p></div></div>{clients.length>0&&<button className="activity-footer" onClick={()=>setSheet("Orders")}>See all activity <ArrowUpRight size={14}/></button>}</section></div>
-        </>:sheet==="Settings"?<SettingsPage clients={visibleClients} data={visibleData} customTables={customTables} members={workspaceMembers} isOwner={userRole==="owner"} onInvite={()=>{setInviteEmail("");setInviteRole("va");setInviteClients([]);setInviteToken("");setModal("invite")}} onRevoke={revokeMember} onOpen={id=>{setActive(id);setSheet("Overview")}} onEdit={openClientSettings} onDelete={requestDeleteClient} onAdd={()=>setModal("client")}/>:<>
+        </>:sheet==="Settings"?<SettingsPage clients={visibleClients} data={visibleData} customTables={customTables} members={workspaceMembers} memberError={workspaceMembersError} memberWarning={workspaceMembersWarning} membersLoading={workspaceMembersLoading} isOwner={userRole==="owner"} publicId={userPublicId} onCopyPublicId={copyPublicId} onInvite={()=>{setInvitePublicId("");setInviteRecipient(null);setInviteRole("va");setInviteClients([]);setModal("invite")}} onRevoke={revokeMember} onOpen={id=>{setActive(id);setSheet("Overview")}} onEdit={openClientSettings} onDelete={requestDeleteClient} onAdd={()=>setModal("client")}/>:<>
           <div className="client-context"><span className="context-avatar" style={{background:current?.color}}>{current?.initials}</span><div><b>{current?.name}</b><span><Store size={13}/>{current?.store}<span className="context-sep">·</span><span className="live-dot"/> Connected</span></div><button aria-label="Client settings" onClick={()=>current&&openClientSettings(current)}><MoreHorizontal size={18}/></button></div>
           <div className="sheet-tabs">{[...tabs,...activeCustomTables.map(t=>t.id)].map(t=>{const custom=activeCustomTables.find(x=>x.id===t);return <button key={t} className={sheet===t?"tab-active":""} onClick={()=>setSheet(t)}>{custom?<FileSpreadsheet size={15}/>:t==="Product hunting"?<Package size={15}/>:t==="Listings"?<ClipboardList size={15}/>:t==="Orders"?<ShoppingBag size={15}/>:<LayoutDashboard size={15}/>} {custom?.name??t}{t!=="Overview"&&<span className="tab-count">{custom?custom.rows.length:items?.[t]?.length??0}</span>}</button>})}<button className="add-table-tab" onClick={()=>{setImportName("");setImportFile(null);setModal("import")}}><Plus size={14}/> Import CSV</button></div>
            <>
@@ -355,15 +460,13 @@ export default function Home() {
     </section>
     </>}
     {notice&&<div className="toast"><span className="toast-check">✓</span>{notice}</div>}
-    {modal&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setModal(null)}}><div className="modal"><button className="modal-close" onClick={()=>setModal(null)} aria-label="Close"><X size={17}/></button>{modal==="client"?<><span className="modal-icon mint"><Users size={19}/></span><h2>Add a client</h2><p>Create a workspace for your client’s stores, product ideas, listings, and orders.</p><label>CLIENT NAME</label><input autoFocus className="modal-input" value={clientName} onChange={e=>setClientName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addClient()} placeholder="e.g. Alex Morgan"/><div className="modal-note"><Store size={15}/> You can add their store name and details later.</div><button className="button primary modal-submit" onClick={addClient} disabled={clientBusy}><Plus size={16}/>{clientBusy?"Creating workspace…":"Create workspace"}</button></>:modal==="product"?<ProductModal name={productName} setName={setProductName} sourceUrl={productSourceUrl} setSourceUrl={setProductSourceUrl} source={productSource} setSource={setProductSource} cost={supplierCost} setCost={setSupplierCost} price={ebayPrice} setPrice={setEbayPrice} onAdd={addProduct}/>:modal==="edit"?<RowEditModal title={customTable?.name??sheet} draft={editDraft} fields={Object.keys(editDraft).filter(key=>key!=="id"&&key!=="__rowId"&&key!=="__createdBy"&&(customTable||!(["profit","margin"].includes(key))))} setDraft={setEditDraft} onSave={saveEditedRow} onClose={()=>setModal(null)}/>:modal==="import"?<ImportTableModal name={importName} setName={setImportName} file={importFile} setFile={setImportFile} busy={importBusy} onImport={createTableFromImport} onClose={()=>setModal(null)}/>:modal==="clientSettings"&&settingsDraft?<ClientSettingsModal draft={settingsDraft} setDraft={setSettingsDraft} onSave={saveClientSettings} onDelete={()=>{const target=clients.find(c=>c.id===settingsDraft.id); if(target)requestDeleteClient(target)}} onClose={()=>{setModal(null);setSettingsDraft(null)}}/>:modal==="deleteClient"&&deleteTarget?<DeleteClientModal client={deleteTarget} rows={Object.values(data[deleteTarget.id]??{}).reduce((total,sheetRows)=>total+(sheetRows as any[]).length,0)} tables={customTables[deleteTarget.id]??[]} busy={deleteBusy} onConfirm={confirmDeleteClient} onCancel={()=>{setModal(null);setDeleteTarget(null)}}/>:modal==="invite"?<InviteModal email={inviteEmail} setEmail={setInviteEmail} role={inviteRole} setRole={setInviteRole} clients={clients} selected={inviteClients} setSelected={setInviteClients} token={inviteToken} busy={inviteBusy} onCreate={createInvitation} onCopy={copyInvitation} onClose={()=>setModal(null)}/>:<><span className="modal-icon lavender"><BadgeCheck size={19}/></span><h2>{authMode==="signup"?"Create your Dropdesk account":"Welcome back"}</h2><p>{authMode==="signup"?"Start organizing client stores, products, listings, and orders.":"Sign in to continue to your workspace."}</p><button className="google-auth-button" type="button" onClick={continueWithGoogle}><span className="google-g">G</span>Continue with Google</button><div className="auth-divider"><span/>or continue with email<span/></div><form onSubmit={submitAuth}>{authMode==="signup"&&<><label htmlFor="auth-name">YOUR NAME</label><input id="auth-name" autoComplete="name" className="modal-input" value={authName} onChange={e=>setAuthName(e.target.value)} placeholder="Your name" required/></>}<label htmlFor="auth-email">EMAIL ADDRESS</label><input id="auth-email" autoFocus type="email" autoComplete="email" className="modal-input" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="you@example.com" required/><label htmlFor="auth-password">PASSWORD</label><input id="auth-password" type="password" autoComplete={authMode==="signup"?"new-password":"current-password"} minLength={8} className="modal-input" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="At least 8 characters" required/><button className="button primary modal-submit" type="submit" disabled={authBusy}>{authBusy?(authMode==="signup"?"Creating account…":"Signing in…"):(authMode==="signup"?"Create account":"Sign in")}<ArrowUpRight size={15}/></button></form><button className="auth-mode-switch" type="button" onClick={()=>setAuthMode(authMode==="signup"?"login":"signup")}>{authMode==="signup"?"Already have an account? Sign in":"New to Dropdesk? Create an account"}</button><div className="modal-note"><BadgeCheck size={15}/> Your workspace is private to your account.</div></>}</div></div>}
+    {modal&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setModal(null)}}><div className="modal"><button className="modal-close" onClick={()=>setModal(null)} aria-label="Close"><X size={17}/></button>{modal==="client"?<><span className="modal-icon mint"><Users size={19}/></span><h2>Add a client</h2><p>Create a workspace for your client’s stores, product ideas, listings, and orders.</p><label>CLIENT NAME</label><input autoFocus className="modal-input" value={clientName} onChange={e=>setClientName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addClient()} placeholder="e.g. Alex Morgan"/><div className="modal-note"><Store size={15}/> You can add their store name and details later.</div><button className="button primary modal-submit" onClick={addClient} disabled={clientBusy}><Plus size={16}/>{clientBusy?"Creating workspace…":"Create workspace"}</button></>:modal==="product"?<ProductModal name={productName} setName={setProductName} sourceUrl={productSourceUrl} setSourceUrl={setProductSourceUrl} source={productSource} setSource={setProductSource} cost={supplierCost} setCost={setSupplierCost} price={ebayPrice} setPrice={setEbayPrice} onAdd={addProduct}/>:modal==="edit"?<RowEditModal title={customTable?.name??sheet} draft={editDraft} fields={Object.keys(editDraft).filter(key=>key!=="id"&&key!=="__rowId"&&key!=="__createdBy"&&(customTable||!(["profit","margin"].includes(key))))} setDraft={setEditDraft} onSave={saveEditedRow} onClose={()=>setModal(null)}/>:modal==="import"?<ImportTableModal name={importName} setName={setImportName} file={importFile} setFile={setImportFile} busy={importBusy} onImport={createTableFromImport} onClose={()=>setModal(null)}/>:modal==="clientSettings"&&settingsDraft?<ClientSettingsModal draft={settingsDraft} setDraft={setSettingsDraft} onSave={saveClientSettings} onDelete={()=>{const target=clients.find(c=>c.id===settingsDraft.id); if(target)requestDeleteClient(target)}} onClose={()=>{setModal(null);setSettingsDraft(null)}}/>:modal==="deleteClient"&&deleteTarget?<DeleteClientModal client={deleteTarget} rows={Object.values(data[deleteTarget.id]??{}).reduce((total,sheetRows)=>total+(sheetRows as any[]).length,0)} tables={customTables[deleteTarget.id]??[]} busy={deleteBusy} onConfirm={confirmDeleteClient} onCancel={()=>{setModal(null);setDeleteTarget(null)}}/>:modal==="invite"?<InviteModal publicId={invitePublicId} setPublicId={(value)=>{setInvitePublicId(value);setInviteRecipient(null)}} recipient={inviteRecipient} lookupBusy={inviteLookupBusy} onFind={findInviteRecipient} role={inviteRole} setRole={setInviteRole} clients={visibleClients.filter(client=>client.workspace_id===(current?.workspace_id??selectedWorkspaceId))} selected={inviteClients} setSelected={setInviteClients} busy={inviteBusy} onCreate={createInvitation} onClose={()=>setModal(null)}/>:<><span className="modal-icon lavender"><BadgeCheck size={19}/></span><h2>{authMode==="signup"?"Create your Dropdesk account":"Welcome back"}</h2><p>{authMode==="signup"?"Start organizing client stores, products, listings, and orders.":"Sign in to continue to your workspace."}</p><button className="google-auth-button" type="button" onClick={continueWithGoogle}><span className="google-g">G</span>Continue with Google</button><div className="auth-divider"><span/>or continue with email<span/></div><form onSubmit={submitAuth}>{authMode==="signup"&&<><label htmlFor="auth-name">YOUR NAME</label><input id="auth-name" autoComplete="name" className="modal-input" value={authName} onChange={e=>setAuthName(e.target.value)} placeholder="Your name" required/></>}<label htmlFor="auth-email">EMAIL ADDRESS</label><input id="auth-email" autoFocus type="email" autoComplete="email" className="modal-input" value={authEmail} onChange={e=>setAuthEmail(e.target.value)} placeholder="you@example.com" required/><label htmlFor="auth-password">PASSWORD</label><input id="auth-password" type="password" autoComplete={authMode==="signup"?"new-password":"current-password"} minLength={8} className="modal-input" value={authPassword} onChange={e=>setAuthPassword(e.target.value)} placeholder="At least 8 characters" required/><button className="button primary modal-submit" type="submit" disabled={authBusy}>{authBusy?(authMode==="signup"?"Creating account…":"Signing in…"):(authMode==="signup"?"Create account":"Sign in")}<ArrowUpRight size={15}/></button></form><button className="auth-mode-switch" type="button" onClick={()=>setAuthMode(authMode==="signup"?"login":"signup")}>{authMode==="signup"?"Already have an account? Sign in":"New to Dropdesk? Create an account"}</button><div className="modal-note"><BadgeCheck size={15}/> Your workspace is private to your account.</div></>}</div></div>}
   </main>;
 }
 
-function InviteModal({email,setEmail,role,setRole,clients,selected,setSelected,token,busy,onCreate,onCopy,onClose}:{email:string;setEmail:(v:string)=>void;role:"manager"|"va"|"viewer";setRole:(v:"manager"|"va"|"viewer")=>void;clients:Client[];selected:string[];setSelected:(v:string[])=>void;token:string;busy:boolean;onCreate:()=>void;onCopy:()=>void;onClose:()=>void}) {
-  const invitationLink=typeof window!=="undefined"&&token?`${window.location.origin}/?invite=${encodeURIComponent(token)}`:"";
+function InviteModal({publicId,setPublicId,recipient,lookupBusy,onFind,role,setRole,clients,selected,setSelected,busy,onCreate,onClose}:{publicId:string;setPublicId:(v:string)=>void;recipient:InviteRecipient|null;lookupBusy:boolean;onFind:()=>void;role:"manager"|"va"|"viewer";setRole:(v:"manager"|"va"|"viewer")=>void;clients:Client[];selected:string[];setSelected:(v:string[])=>void;busy:boolean;onCreate:()=>void;onClose:()=>void}) {
   const toggle=(id:string)=>setSelected(selected.includes(id)?selected.filter(v=>v!==id):[...selected,id]);
-  if(token)return <><span className="modal-icon mint"><BadgeCheck size={19}/></span><h2>Invitation ready</h2><p>Share this one-use link with {email}. It expires in seven days and only works for that email address.</p><label>INVITATION LINK</label><input className="modal-input" readOnly value={invitationLink}/><div className="modal-actions"><button className="button secondary" onClick={onClose}>Done</button><button className="button primary" onClick={onCopy}><Link2 size={15}/> Copy invite link</button></div></>;
-  return <form onSubmit={e=>{e.preventDefault();onCreate()}}><span className="modal-icon mint"><Users size={19}/></span><h2>Invite a teammate</h2><p>They must sign in with the invited email. Select the clients they should be able to access.</p><label htmlFor="invite-email">EMAIL ADDRESS</label><input id="invite-email" type="email" className="modal-input" autoFocus required value={email} onChange={e=>setEmail(e.target.value)} placeholder="teammate@example.com"/><label htmlFor="invite-role">ROLE</label><select id="invite-role" className="modal-input" value={role} onChange={e=>setRole(e.target.value as "manager"|"va"|"viewer")}><option value="manager">Manager — edit data</option><option value="va">VA — create and edit data</option><option value="viewer">Viewer — read only</option></select><label>CLIENT ACCESS</label><div className="invite-client-list">{clients.map(client=><label key={client.id} className="invite-client-option"><input type="checkbox" checked={selected.includes(client.id)} onChange={()=>toggle(client.id)}/><span>{client.name}</span><small>{client.visibility??"selected"}</small></label>)}</div><p className="invite-help">Clients not selected remain hidden. Workspace-visible clients can still be seen by all workspace members.</p><div className="modal-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button primary" type="submit" disabled={busy}>{busy?"Creating link…":"Create invite link"}</button></div></form>;
+  return <form onSubmit={e=>{e.preventDefault();if(recipient)onCreate();else onFind()}}><span className="modal-icon mint"><Users size={19}/></span><h2>Invite a teammate</h2><p>Enter their Dropdesk ID to find their account. The invitation will appear in their notifications.</p><label htmlFor="invite-public-id">DROPdesk ID</label><div className="invite-id-search"><input id="invite-public-id" className="modal-input" autoFocus required value={publicId} onChange={e=>setPublicId(e.target.value)} placeholder="DD-1234ABCD5678EF90"/><button className="button secondary" type="button" onClick={onFind} disabled={lookupBusy}>{lookupBusy?"Searching…":"Find user"}</button></div>{recipient&&<div className="invite-recipient"><span className="profile-avatar">{recipient.display_name.slice(0,2).toUpperCase()}</span><span><b>{recipient.display_name}</b><small>{recipient.public_id}</small></span><button type="button" onClick={()=>setPublicId("")} aria-label="Clear selected user"><X size={15}/></button></div>}<label htmlFor="invite-role">ROLE</label><select id="invite-role" className="modal-input" value={role} onChange={e=>setRole(e.target.value as "manager"|"va"|"viewer")}><option value="manager">Manager — edit data</option><option value="va">VA — create and edit data</option><option value="viewer">Viewer — read only</option></select><label>CLIENT ACCESS</label><div className="invite-client-list">{clients.map(client=><label key={client.id} className="invite-client-option"><input type="checkbox" checked={selected.includes(client.id)} onChange={()=>toggle(client.id)}/><span>{client.name}</span><small>{client.visibility??"selected"}</small></label>)}</div><p className="invite-help">Ask your teammate for their Dropdesk ID — they can copy it from Settings → Your Dropdesk ID. Clients not selected remain hidden. Workspace-visible clients can still be seen by all workspace members.</p><div className="modal-actions"><button className="button secondary" type="button" onClick={onClose}>Cancel</button><button className="button primary" type="submit" disabled={busy||lookupBusy||!recipient}>{busy?"Sending…":"Send invitation"}</button></div></form>;
 }
 
 function ProductModal({name,setName,sourceUrl,setSourceUrl,source,setSource,cost,setCost,price,setPrice,onAdd}:{name:string;setName:(value:string)=>void;sourceUrl:string;setSourceUrl:(value:string)=>void;source:string;setSource:(value:string)=>void;cost:string;setCost:(value:string)=>void;price:string;setPrice:(value:string)=>void;onAdd:()=>void}) {
@@ -419,11 +522,12 @@ function MoneyInput({value,onChange}:{value:number;onChange:(v:string)=>void}) {
 function RowMenu({onEdit,onDelete}:{onEdit?:()=>void;onDelete:()=>void}) {const [open,setOpen]=useState(false);return <div className="row-menu-wrap"><button className="row-more" aria-label="Row options" onClick={()=>setOpen(!open)}><MoreHorizontal size={17}/></button>{open&&<div className="row-menu">{onEdit&&<button onClick={()=>{onEdit();setOpen(false)}}><Pencil size={14}/> Edit row</button>}<button onClick={()=>{onDelete();setOpen(false)}}><X size={14}/> Delete row</button></div>}</div>}
 function EmptyState({title,text,onClick,actionLabel="Add a row"}:{title:string;text:string;onClick:()=>void;actionLabel?:string}) {return <div className="empty-state"><span className="empty-icon"><FileSpreadsheet size={18}/></span><b>{title}</b><p>{text}</p><button className="button secondary" onClick={onClick}><Plus size={14}/> {actionLabel}</button></div>}
 
-function SettingsPage({clients,data,customTables,members,isOwner,onInvite,onRevoke,onOpen,onEdit,onDelete,onAdd}:{clients:Client[];data:WorkspaceData;customTables:Record<string,CustomTable[]>;members:WorkspaceMember[];isOwner:boolean;onInvite:()=>void;onRevoke:(member:WorkspaceMember)=>void;onOpen:(id:string)=>void;onEdit:(client:Client)=>void;onDelete:(client:Client)=>void;onAdd:()=>void}) {
+function SettingsPage({clients,data,customTables,members,memberError,memberWarning,membersLoading,isOwner,onInvite,onRevoke,onOpen,onEdit,onDelete,onAdd,publicId,onCopyPublicId}:{clients:Client[];data:WorkspaceData;customTables:Record<string,CustomTable[]>;members:WorkspaceMember[];memberError:string;memberWarning:string;membersLoading:boolean;isOwner:boolean;onInvite:()=>void;onRevoke:(member:WorkspaceMember)=>void;onOpen:(id:string)=>void;onEdit:(client:Client)=>void;onDelete:(client:Client)=>void;onAdd:()=>void;publicId:string;onCopyPublicId:()=>void}) {
   const importedTables=(client:Client)=>customTables[client.id]??[];
   const rowCount=(client:Client)=>Object.values(data[client.id]??{}).reduce((total,rows)=>total+(rows as unknown[]).length,0)+importedTables(client).reduce((total,table)=>total+table.rows.length,0);
   return <section className="settings-page">
-    {isOwner&&<section className="panel team-panel"><div className="team-heading"><div><h3>Workspace members</h3><p>Invite a teammate and choose which clients they can access. Remove a member to revoke all access.</p></div><button className="button primary" onClick={onInvite}><Users size={15}/> Invite teammate</button></div><div className="team-member-list">{members.map(member=><div key={member.user_id} className="team-member-row"><div className="team-member-copy"><b>{member.email||member.user_id}</b><small>{member.role}{member.client_ids.length?` · ${member.client_ids.map(id=>clients.find(client=>client.id===id)?.name??id).join(", ")}`:" · no selected clients"}</small></div>{member.role!=="owner"&&<button className="button danger team-revoke" onClick={()=>onRevoke(member)}>Remove access</button>}</div>)}{!members.length&&<p className="team-empty">No workspace members were returned.</p>}</div></section>}
+    <section className="panel dropdesk-id-panel"><div className="panel-heading"><div><h3>Your Dropdesk ID</h3><p>Share this ID with a workspace owner so they can invite you to their workspace.</p></div><button className="button secondary" onClick={onCopyPublicId}><Copy size={14}/> Copy ID</button></div><div className="dropdesk-id-value"><b>{publicId||"Still loading…"}</b><small>{publicId?"This ID identifies your account. It is not a password — anyone with it can invite you, so only accept invitations you expect.":"Could not load your ID yet. Reload the page, or sign in if you are in demo mode."}</small></div></section>
+    {isOwner&&<section className="panel team-panel"><div className="team-heading"><div><h3>Workspace members</h3><p>Invite a teammate and choose which clients they can access. Remove a member to revoke all access.</p></div><button className="button primary" onClick={onInvite}><Users size={15}/> Invite teammate</button></div><div className="team-member-list">{members.map(member=><div key={member.user_id} className="team-member-row"><div className="team-member-copy"><b>{member.email||member.user_id}</b><small>{member.role}{member.client_ids.length?` · ${member.client_ids.map(id=>clients.find(client=>client.id===id)?.name??id).join(", ")}`:" · no selected clients"}</small></div>{member.role!=="owner"&&<button className="button danger team-revoke" onClick={()=>onRevoke(member)}>Remove access</button>}</div>)}{!members.length&&<p className="team-empty">{membersLoading?"Loading workspace members…":memberError?`Could not load workspace members: ${memberError}`:"No workspace members were returned."}</p>}{memberWarning&&<p className="team-empty">{memberWarning}</p>}</div></section>}
     <div className="settings-intro"><h2>Clients</h2><p>Rename a client, update their store details, or remove a client and everything stored for them.</p></div>
     <section className="panel settings-panel">
       <div className="panel-heading"><div><h3>Your clients</h3><p>{clients.length?`${clients.length} client workspace${clients.length===1?"":"s"} in this account.`:"No clients yet."}</p></div><button className="text-button" onClick={onAdd}>Add client <Plus size={14}/></button></div>
