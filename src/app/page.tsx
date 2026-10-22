@@ -265,16 +265,28 @@ export default function Home() {
   }),[rows,query,sourceFilter]);
   const allOrders = Object.values(visibleData).flatMap(d=>d.Orders||[]);
   const orderProfit = allOrders.reduce((a,r)=>a+r.profit,0);
-  const setRows = (name:string, next:any[])=>{
+  const setRows = async(name:string, next:any[]):Promise<boolean>=>{
     if(!canWriteWorkspace){toast("Your role is read-only");return false}
     if(!(customTable&&name===customTable.id)&&supabase&&userId){
       const prior=data[active]?.[name]??[];const remaining=new Set(next.map(row=>String(row.__rowId??row.id)));
       const removed=prior.map(row=>String(row.__rowId??row.id)).filter(id=>!remaining.has(id));
       if(removed.length){
         const archived={deleted_at:new Date().toISOString(),deleted_by:userId};
-        void (workspaceScope
-          ? supabase.from("workspace_rows").update(archived).is("client_id",null).eq("workspace_id",selectedWorkspaceId).in("id",removed)
-          : supabase.from("workspace_rows").update(archived).eq("client_id",active).in("id",removed));
+        // Postgres checks the SELECT policies against the *new* row too, so an
+        // archive rejected by RLS must not disappear from the screen. Only drop
+        // the row locally after Supabase confirms it.
+        let archiveError:{code?:string;message?:string;details?:string;hint?:string}|null=null;
+        try{
+          const {error}=await (workspaceScope
+            ? supabase.from("workspace_rows").update(archived).is("client_id",null).eq("workspace_id",selectedWorkspaceId).in("id",removed)
+            : supabase.from("workspace_rows").update(archived).eq("client_id",active).in("id",removed));
+          archiveError=error;
+        }catch(error){archiveError={message:error instanceof Error?error.message:String(error)}}
+        if(archiveError){
+          console.error("[Dropdesk][rows.archive] failed",{workspaceId:selectedWorkspaceId,clientId:workspaceScope?null:active,ids:removed,code:archiveError.code,message:archiveError.message,details:archiveError.details,hint:archiveError.hint});
+          toast(`Could not delete ${removed.length===1?"this row":"these rows"}: ${errorText(archiveError,"unknown error")}`);
+          return false;
+        }
       }
     }
     customTable&&name===customTable.id?setCustomTables(prev=>({...prev,[active]:(prev[active]??[]).map(t=>t.id===name?{...t,rows:next}:t)})):setData(prev=>({...prev,[active]:{...prev[active], [name]:next}}));
@@ -388,7 +400,7 @@ export default function Home() {
     if(!customTable&&sheet==="Orders")nextDraft.profit=+(nextDraft.sale-nextDraft.cost-nextDraft.fee).toFixed(2);
     setRows(sheet,rows.map(row=>rowKey(row)===key?nextDraft:row));setSelectedRows(current=>current.filter(id=>id!==key));setEditingRow(null);setEditDraft({});setModal(null);toast("Row updated");
   };
-  const deleteSelectedRows=()=>{if(!selectedRows.length)return;if(!canWriteWorkspace)return toast("Your role is read-only");setRows(sheet,rows.filter(row=>!selectedRows.includes(rowKey(row))));setSelectedRows([]);toast("Selected rows deleted")};
+  const deleteSelectedRows=async()=>{if(!selectedRows.length)return;if(!canWriteWorkspace)return toast("Your role is read-only");const ok=await setRows(sheet,rows.filter(row=>!selectedRows.includes(rowKey(row))));if(!ok)return;setSelectedRows([]);toast("Selected rows deleted")};
   const toggleRowSelection=(key:string)=>setSelectedRows(current=>current.includes(key)?current.filter(id=>id!==key):[...current,key]);
   const allVisibleSelected=filtered.length>0&&filtered.every((row:any)=>selectedRows.includes(rowKey(row)));
   const toggleVisibleSelection=()=>setSelectedRows(allVisibleSelected?current=>current.filter(id=>!filtered.some((row:any)=>rowKey(row)===id)):Array.from(new Set([...selectedRows,...filtered.map((row:any)=>rowKey(row))])));

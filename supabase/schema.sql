@@ -202,13 +202,16 @@ create policy "Owner inserts clients" on public.clients for insert to authentica
 create policy "Owner updates clients" on public.clients for update to authenticated using(public.workspace_role(workspace_id)='owner') with check(public.workspace_role(workspace_id)='owner');
 create policy "Client access visible to managers" on public.client_access for select to authenticated using(public.workspace_role((select workspace_id from public.clients c where c.id=client_id)) in ('owner','manager') or user_id=auth.uid());
 create policy "Client access managed by owner" on public.client_access for all to authenticated using(public.workspace_role((select workspace_id from public.clients c where c.id=client_id))='owner') with check(public.workspace_role((select workspace_id from public.clients c where c.id=client_id))='owner');
-create policy "Accessible rows read" on public.workspace_rows for select to authenticated using(deleted_at is null and public.can_access_client(client_id));
+-- Soft-delete flag is filtered by the app's query, not by RLS: PostgreSQL also
+-- checks the SELECT policy against the new row version of an UPDATE, so
+-- `deleted_at is null` here made archiving impossible (42501).
+create policy "Accessible rows read" on public.workspace_rows for select to authenticated using(public.can_access_client(client_id));
 create policy "Accessible rows insert" on public.workspace_rows for insert to authenticated with check(public.can_write_client(client_id));
 create policy "Accessible rows update" on public.workspace_rows for update to authenticated using(public.can_write_client(client_id)) with check(public.can_write_client(client_id));
 drop policy if exists "Workspace rows read" on public.workspace_rows;
 drop policy if exists "Workspace rows insert" on public.workspace_rows;
 drop policy if exists "Workspace rows update" on public.workspace_rows;
-create policy "Workspace rows read" on public.workspace_rows for select to authenticated using(deleted_at is null and client_id is null and public.is_workspace_member(workspace_id));
+create policy "Workspace rows read" on public.workspace_rows for select to authenticated using(client_id is null and public.is_workspace_member(workspace_id));
 create policy "Workspace rows insert" on public.workspace_rows for insert to authenticated with check(client_id is null and workspace_id is not null and public.workspace_role(workspace_id) in ('owner','manager','va'));
 create policy "Workspace rows update" on public.workspace_rows for update to authenticated using(client_id is null and public.workspace_role(workspace_id) in ('owner','manager','va')) with check(client_id is null and workspace_id is not null and public.workspace_role(workspace_id) in ('owner','manager','va'));
 create policy "Accessible tables read" on public.workspace_tables for select to authenticated using(deleted_at is null and public.can_access_client(client_id));
@@ -556,7 +559,7 @@ drop policy if exists "Workspace rows update" on public.workspace_rows;
 
 create policy "Workspace rows read" on public.workspace_rows
   for select to authenticated
-  using (deleted_at is null and client_id is null and public.can_view_shared_table(workspace_id));
+  using (client_id is null and public.can_view_shared_table(workspace_id));
 
 create policy "Workspace rows insert" on public.workspace_rows
   for insert to authenticated
