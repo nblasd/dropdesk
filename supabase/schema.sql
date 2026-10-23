@@ -731,4 +731,48 @@ grant execute on function public.send_workspace_invitation(text, text, text, tex
   public.list_my_workspace_invitations(),
   public.set_shared_table_access(text, uuid, boolean) to authenticated;
 
+-- === shared row attribution (mirrors migration 20261028) ===
+-- "Added by" labels for the shared Product hunting table. workspace_rows.user_id
+-- already records the creator; this RPC resolves that id to a display name for
+-- every workspace member without exposing emails or opening up user_profiles.
+create or replace function public.list_workspace_labels(p_workspace_id text)
+returns table(user_id uuid, display_name text, public_id text)
+language plpgsql stable security definer set search_path = public, auth, pg_temp as $$
+begin
+  if auth.uid() is null or not public.is_workspace_member(p_workspace_id) then
+    raise exception 'not authorized';
+  end if;
+
+  return query
+  with people as (
+    select m.user_id
+    from public.workspace_members m
+    where m.workspace_id = p_workspace_id
+    union
+    select w.owner_id
+    from public.workspaces w
+    where w.id = p_workspace_id
+    union
+    select r.user_id
+    from public.workspace_rows r
+    where r.workspace_id = p_workspace_id and r.deleted_at is null and r.user_id is not null
+  )
+  select people.user_id,
+         coalesce(
+           nullif(profile.display_name, ''),
+           nullif(account.raw_user_meta_data->>'full_name', ''),
+           nullif(account.raw_user_meta_data->>'name', ''),
+           nullif(split_part(coalesce(account.email, ''), '@', 1), ''),
+           'Team member'
+         )::text,
+         coalesce(profile.public_id, '')::text
+  from people
+  left join public.user_profiles profile on profile.user_id = people.user_id
+  left join auth.users account on account.id = people.user_id
+  order by 2;
+end $$;
+
+revoke all on function public.list_workspace_labels(text) from public;
+grant execute on function public.list_workspace_labels(text) to authenticated;
+
 

@@ -127,6 +127,17 @@ select option{background-color:#fff;color:#3f463e}
 .nav-shared-tag{margin-left:auto;font-size:8px;letter-spacing:.5px;text-transform:uppercase;color:#8b9187;background:#f0f2ee;border-radius:5px;padding:2px 5px}
 .nav-link.active .nav-shared-tag{background:#e3ede5;color:#4c7355}
 :root[data-theme="dark"] .nav-shared-tag{background:#26332a;color:#9fb3a3}
+/* "Added by" attribution badge on the shared Product hunting table. */
+.added-by-cell{padding-right:4px!important}
+.added-by{display:inline-flex;align-items:center;gap:6px;max-width:150px;padding:3px 7px 3px 4px;border:1px solid #e7ebe4;border-radius:999px;background:#f7faf5;color:#5f6b5f}
+.added-by-avatar{width:18px;height:18px;flex-shrink:0;border-radius:50%;display:grid;place-items:center;background:#dfe9dd;color:#4c6b51;font-size:7px;font-weight:700;letter-spacing:.2px}
+.added-by-name{font-size:9px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.added-by.you{border-color:#cfe0d2;background:#eef6ee;color:#41664a}
+.added-by.you .added-by-avatar{background:#315e49;color:#fff}
+:root[data-theme="dark"] .added-by{background:#202b22;border-color:#344338;color:#c3d0c5}
+:root[data-theme="dark"] .added-by-avatar{background:#2c3d30;color:#cfe3d3}
+:root[data-theme="dark"] .added-by.you{background:#26372b;border-color:#3c5642;color:#bddcc2}
+:root[data-theme="dark"] .added-by.you .added-by-avatar{background:#4d7c5c;color:#fff}
 .inline-warning{color:#b5795d;font-weight:600}
 :root[data-theme="dark"] .inline-warning{color:#dda184}
 
