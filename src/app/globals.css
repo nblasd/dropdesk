@@ -245,3 +245,18 @@ select option{background-color:#fff;color:#3f463e}
 /* Required-field marker in dialogs. */
 .required-mark{font-size:8px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#b5795d;margin-left:6px}
 :root[data-theme="dark"] .required-mark{color:#dda184}
+
+/* Orders: totals strip mirrors the operations spreadsheet and the extra fields
+   from its columns. */
+.order-totals{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px}
+.order-total{display:inline-flex;align-items:baseline;gap:6px;border:1px solid #e7ebe4;border-radius:8px;background:#fff;padding:6px 10px}
+.order-total small{font-size:8px;font-weight:700;letter-spacing:.7px;color:#8b9187}
+.order-total b{font-family:var(--display);font-size:12px;font-weight:650;letter-spacing:-.2px}
+.order-total.profit b{color:#3f7350}
+.order-total.loss b{color:#b06a5a}
+.tracking-input{width:112px}
+.qty-input{width:38px;text-align:center}
+:root[data-theme="dark"] .order-total{background:#202b22;border-color:#344338}
+:root[data-theme="dark"] .order-total small{color:#9fb3a3}
+:root[data-theme="dark"] .order-total.profit b{color:#9fd0ac}
+:root[data-theme="dark"] .order-total.loss b{color:#e0a090}
