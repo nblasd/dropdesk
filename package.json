@@ -1,7 +1,7 @@
 {
   "name": "dropdesk",
   "version": "0.1.0",
-  "private": true,  "scripts": { "dev": "next dev", "build": "next build", "start": "next start", "lint": "eslint .", "typecheck": "tsc --noEmit" },
+  "private": true,  "scripts": { "dev": "next dev", "build": "next build", "start": "next start", "lint": "eslint .", "typecheck": "tsc --noEmit", "test:themes": "node scripts/theme-smoke.mjs", "test:workspace": "node scripts/workspace-smoke.mjs" },
   "dependencies": {
     "@supabase/ssr": "^0.6.1",
     "@supabase/supabase-js": "^2.57.0",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, ArrowDown, ArrowDownToLine, ArrowLeftRight, ArrowUpRight, BadgeCheck, Bell, Menu, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, ClipboardList, Command, Copy, CreditCard, FileSpreadsheet, Filter, LayoutDashboard, ListPlus, LogOut, MoreHorizontal, Package, Pencil, Plus, Search, Settings2, ShoppingBag, Sparkles, Store, TrendingUp, Users, UserPlus, Trash2, X, type LucideIcon } from "lucide-react";
+import { Activity, ArrowDown, ArrowDownToLine, ArrowLeftRight, ArrowUpRight, BadgeCheck, Bell, Check, Menu, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, ClipboardList, Command, Copy, CreditCard, FileSpreadsheet, Filter, LayoutDashboard, ListPlus, LogOut, MoreHorizontal, Package, Palette, Pencil, Plus, Search, Settings2, ShoppingBag, Sparkles, Store, TrendingUp, Users, UserPlus, Trash2, X, type LucideIcon } from "lucide-react";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 type Client = { id: string; name: string; initials: string; color: string; store: string; workspace_id?: string; user_id?: string; visibility?: "workspace"|"selected"|"private" };
@@ -16,6 +16,16 @@ type WorkspaceLabel = { display_name: string; public_id: string };
 type InviteRecipient = { user_id: string; public_id: string; display_name: string };
 type IncomingInvitation = { id: string; workspace_id: string; workspace_name: string; inviter_name: string; role: "manager"|"va"|"viewer"; client_ids: string[]; shared_table?: boolean; created_at: string; expires_at: string };
 type WorkspaceData = Record<string, Record<string, any[]>>;
+type Theme = "midnight" | "ocean" | "ember" | "orchid" | "daylight";
+type ThemeDefinition = { id: Theme; name: string; description: string; tone: "dark" | "light"; colors: [string, string, string] };
+const THEMES: ThemeDefinition[] = [
+  { id: "midnight", name: "Midnight", description: "Deep evergreen", tone: "dark", colors: ["#111813", "#26372b", "#a8d1ae"] },
+  { id: "ocean", name: "Ocean", description: "Cool marine blue", tone: "dark", colors: ["#0b1724", "#18344b", "#9ed3f1"] },
+  { id: "ember", name: "Ember", description: "Warm charcoal", tone: "dark", colors: ["#1b1412", "#412a20", "#f0ae86"] },
+  { id: "orchid", name: "Orchid", description: "Soft violet", tone: "dark", colors: ["#171320", "#382747", "#e3b9f2"] },
+  { id: "daylight", name: "Daylight", description: "Crisp and bright", tone: "light", colors: ["#fafbf9", "#e9f2ec", "#315e49"] },
+];
+const THEME_STORAGE_KEY = "dropdesk-theme";
 const emptyClientData = (): WorkspaceData[string] => ({ "Product hunting": [], Listings: [], Orders: [] });
 const isLegacyDemoClient = (id: string) => /^c[123]$/.test(id) || /-c[123]$/.test(id);
 const tabs: Sheet[] = ["Overview", "Product hunting", "Listings", "Orders"];
@@ -35,6 +45,8 @@ const shortDate = (s:string) => s;
  const isoDateToShort=(value:string)=>{if(!value)return"";const date=new Date(`${value}T00:00:00`);return Number.isNaN(date.getTime())?"":date.toLocaleDateString("en-US",{month:"short",day:"2-digit",year:"numeric"})};
 
 export default function Home() {
+  const [theme, setTheme] = useState<Theme>("midnight");
+  const [demoMode, setDemoMode] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [active, setActive] = useState("");
   const [sheet, setSheet] = useState<Sheet>("Overview");
@@ -99,6 +111,33 @@ export default function Home() {
   const [sharedRowsReady,setSharedRowsReady]=useState(true);
   const [memberLabels,setMemberLabels]=useState<Record<string,WorkspaceLabel>>({});
   const [labelsReady,setLabelsReady]=useState(true);
+  useEffect(()=>{
+    const requested=new URLSearchParams(window.location.search).get("demo")==="1";
+    if(!requested)return;
+    setDemoMode(true);
+    setUserRole("owner");
+  },[]);
+  useEffect(()=>{
+    let saved:Theme|null=null;
+    try {
+      const value=localStorage.getItem(THEME_STORAGE_KEY);
+      saved=THEMES.some(option=>option.id===value)?value as Theme:null;
+    } catch {}
+    const initial=saved??"midnight";
+    const definition=THEMES.find(option=>option.id===initial)??THEMES[0];
+    setTheme(initial);
+    document.documentElement.dataset.theme=initial;
+    document.documentElement.dataset.tone=definition.tone;
+    document.documentElement.style.colorScheme=definition.tone;
+  },[]);
+  const changeTheme=(next:Theme)=>{
+    const definition=THEMES.find(option=>option.id===next)??THEMES[0];
+    setTheme(next);
+    document.documentElement.dataset.theme=next;
+    document.documentElement.dataset.tone=definition.tone;
+    document.documentElement.style.colorScheme=definition.tone;
+    try { localStorage.setItem(THEME_STORAGE_KEY,next) } catch {}
+  };
   const canWriteWorkspace = !userEmail || userRole !== "viewer";
   const inviteRecipientIsMember = !!inviteRecipient && workspaceMembers.some(member=>member.user_id===inviteRecipient.user_id);
   const visibleClients = selectedWorkspaceId ? clients.filter(c=>c.workspace_id===selectedWorkspaceId) : clients;
@@ -207,11 +246,33 @@ export default function Home() {
   },[]);
   useEffect(()=>{setSelectedRows([])},[active,sheet]);
   useEffect(()=>{
-    // Keep the page behind a dialog still: scrolling should move the dialog, never the page.
+    // Treat every overlay as a modal dialog: lock the page, support Escape, keep
+    // keyboard focus inside, and return focus to the trigger after closing.
     if(!modal)return;
-    const previous=document.body.style.overflow;
+    const previousOverflow=document.body.style.overflow;
+    const previousFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;
     document.body.style.overflow="hidden";
-    return()=>{document.body.style.overflow=previous};
+    const dialog=document.querySelector<HTMLElement>(".modal");
+    dialog?.setAttribute("role","dialog");
+    dialog?.setAttribute("aria-modal","true");
+    dialog?.setAttribute("aria-label",dialog.querySelector("h2")?.textContent?.trim()||"Dropdesk dialog");
+    const focusable=()=>Array.from(dialog?.querySelectorAll<HTMLElement>("button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href]")??[]).filter(element=>element.offsetParent!==null);
+    const focusTimer=window.requestAnimationFrame(()=>{if(dialog&&!dialog.contains(document.activeElement))(focusable()[0]??dialog).focus()});
+    const handleKeyDown=(event:KeyboardEvent)=>{
+      if(event.key==="Escape"){setModal(null);return}
+      if(event.key!=="Tab"||!dialog)return;
+      const items=focusable();if(!items.length)return;
+      const first=items[0],last=items[items.length-1];
+      if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}
+      else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
+    };
+    document.addEventListener("keydown",handleKeyDown);
+    return()=>{
+      window.cancelAnimationFrame(focusTimer);
+      document.removeEventListener("keydown",handleKeyDown);
+      document.body.style.overflow=previousOverflow;
+      previousFocus?.focus();
+    };
   },[modal]);
   useEffect(()=>{try{localStorage.setItem("dropdesk-demo",JSON.stringify({clients,data,customTables,active}))}catch{}},[clients,data,customTables,active]);
   useEffect(()=>{
@@ -589,12 +650,13 @@ export default function Home() {
       toast("Workspace access removed");
     }catch(error){toast(error instanceof Error?error.message:"Could not remove workspace access")}
   };
-  const signOut=async()=>{if(supabase)await supabase.auth.signOut();setUserId(null);setUserEmail("");setUserPublicId("");setIncomingInvitations([]);setClients([]);setData({});setCustomTables({});setWorkspaceMembers([]);setMemberships([]);setUserWorkspaceId(null);setSelectedWorkspaceId(null);setUserRole("viewer");setActive("");setSheet("Overview");setMenuOpen(false);setNotificationsOpen(false);setMemberLabels({});setLabelsReady(true);toast("Signed out");};
+  const signOut=async()=>{if(supabase)await supabase.auth.signOut();setDemoMode(false);setUserId(null);setUserEmail("");setUserPublicId("");setIncomingInvitations([]);setClients([]);setData({});setCustomTables({});setWorkspaceMembers([]);setMemberships([]);setUserWorkspaceId(null);setSelectedWorkspaceId(null);setUserRole("viewer");setActive("");setSheet("Overview");setMenuOpen(false);setNotificationsOpen(false);setMemberLabels({});setLabelsReady(true);toast("Signed out of preview");};
 
   if (!authReady) return <main className="landing-loading"><span className="brand-mark"><ArrowLeftRight size={19} strokeWidth={2.4}/></span><b>dropdesk<span className="brand-dot">.</span></b></main>;
 
-  return <main className={userEmail ? "app-shell" : "landing-shell"}>
-    {!userEmail ? <LandingPage onStart={()=>{setAuthMode("signup");setModal("auth")}} onLogin={()=>{setAuthMode("login");setModal("auth")}}/> : <>
+  const workspaceVisible=Boolean(userEmail||demoMode);
+  return <main className={workspaceVisible ? `app-shell${demoMode?" demo-workspace":""}` : "landing-shell"}>
+    {!workspaceVisible ? <LandingPage theme={theme} onThemeChange={changeTheme} onStart={()=>{setAuthMode("signup");setModal("auth")}} onLogin={()=>{setAuthMode("login");setModal("auth")}} onPreview={()=>{setDemoMode(true);setUserRole("owner")}}/> : <>
     {navOpen&&<button className="nav-scrim" aria-label="Close menu" onClick={()=>setNavOpen(false)}/>}
     <aside className={`sidebar ${navOpen?"nav-open":""}`} onClick={(event)=>{const target=event.target as HTMLElement;if(target.closest(".nav-link,.client-link,.new-client,.settings-link"))setNavOpen(false)}}>
       <div className="brand"><span className="brand-mark"><ArrowLeftRight size={19} strokeWidth={2.4}/></span><span>dropdesk<span className="brand-dot">.</span></span></div>
@@ -616,9 +678,9 @@ export default function Home() {
       </div>
     </aside>
     <section className="main-panel">
-      <header className="topbar"><button className="nav-toggle" aria-label="Open menu" aria-expanded={navOpen} onClick={()=>setNavOpen(true)}><Menu size={17}/></button><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14}/><span>{sheet==="Overview"?"Overview":sheet==="Settings"?"Settings":workspaceScope?"Shared table":current?.name}</span>{sheet!=="Overview"&&sheet!=="Settings"&&<><ChevronRight size={14}/><b>{displaySheet}</b></>}</div><div className="top-actions"><div className="search-box"><Search size={16}/><input placeholder="Search anything..." value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌘ K</kbd></div><div className="notification-wrap"><button className="icon-button" onClick={()=>{const opening=!notificationsOpen;setNotificationsOpen(opening);if(opening)void refreshIncomingInvitations()}} aria-label={`Notifications${incomingInvitations.length?`, ${incomingInvitations.length} pending`:""}`} aria-expanded={notificationsOpen}><Bell size={17}/>{incomingInvitations.length>0&&<span className="notification-count">{incomingInvitations.length>9?"9+":incomingInvitations.length}</span>}</button>{notificationsOpen&&<div className="notifications-menu"><div className="notifications-heading"><div><b>Notifications</b><small>{incomingInvitations.length?`${incomingInvitations.length} pending invitation${incomingInvitations.length===1?"":"s"}`:"You're all caught up"}</small></div><button onClick={()=>void refreshIncomingInvitations()} aria-label="Refresh notifications">Refresh</button></div>{incomingInvitations.length?incomingInvitations.map(invitation=><article className="invitation-notification" key={invitation.id}><b>{invitation.inviter_name} invited you</b><span>{invitation.workspace_name} · {invitation.role}</span><small>{invitation.client_ids.length?`${invitation.client_ids.length} selected client${invitation.client_ids.length===1?"":"s"}`:"No selected clients"}{invitation.shared_table?" · shared table":""}</small><div><button className="button secondary" disabled={invitationActionId===invitation.id} onClick={()=>void respondToInvitation(invitation,"decline")}>Decline</button><button className="button primary" disabled={invitationActionId===invitation.id} onClick={()=>void respondToInvitation(invitation,"accept")}>{invitationActionId===invitation.id?"Working…":"Accept"}</button></div></article>):<p className="notifications-empty">Workspace invitations will appear here.</p>}</div>}</div><span className="top-divider"/><button className="help-button" onClick={()=>toast("Help center coming soon")}><CircleHelp size={16}/>Help</button></div></header>
-      <div className="content">
-        {!userEmail&&<div className="guest-banner"><span className="guest-badge"><Sparkles size={14}/> PREVIEW</span><span className="guest-message"><b>Your workspace starts empty.</b> Create a free account to save the clients, listings, and orders you add.</span><button className="button primary guest-cta" onClick={()=>setModal("auth")}>Create free account <ArrowUpRight size={14}/></button></div>}
+      <header className="topbar"><button className="nav-toggle" aria-label="Open menu" aria-expanded={navOpen} onClick={()=>setNavOpen(true)}><Menu size={17}/></button><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14}/><span>{sheet==="Overview"?"Overview":sheet==="Settings"?"Settings":workspaceScope?"Shared table":current?.name}</span>{sheet!=="Overview"&&sheet!=="Settings"&&<><ChevronRight size={14}/><b>{displaySheet}</b></>}</div><div className="top-actions"><div className="search-box"><Search size={16}/><input placeholder="Search anything..." value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌘ K</kbd></div><ThemePicker theme={theme} onChange={changeTheme}/><div className="notification-wrap"><button className="icon-button" onClick={()=>{const opening=!notificationsOpen;setNotificationsOpen(opening);if(opening)void refreshIncomingInvitations()}} aria-label={`Notifications${incomingInvitations.length?`, ${incomingInvitations.length} pending`:""}`} aria-expanded={notificationsOpen}><Bell size={17}/>{incomingInvitations.length>0&&<span className="notification-count">{incomingInvitations.length>9?"9+":incomingInvitations.length}</span>}</button>{notificationsOpen&&<div className="notifications-menu"><div className="notifications-heading"><div><b>Notifications</b><small>{incomingInvitations.length?`${incomingInvitations.length} pending invitation${incomingInvitations.length===1?"":"s"}`:"You're all caught up"}</small></div><button onClick={()=>void refreshIncomingInvitations()} aria-label="Refresh notifications">Refresh</button></div>{incomingInvitations.length?incomingInvitations.map(invitation=><article className="invitation-notification" key={invitation.id}><b>{invitation.inviter_name} invited you</b><span>{invitation.workspace_name} · {invitation.role}</span><small>{invitation.client_ids.length?`${invitation.client_ids.length} selected client${invitation.client_ids.length===1?"":"s"}`:"No selected clients"}{invitation.shared_table?" · shared table":""}</small><div><button className="button secondary" disabled={invitationActionId===invitation.id} onClick={()=>void respondToInvitation(invitation,"decline")}>Decline</button><button className="button primary" disabled={invitationActionId===invitation.id} onClick={()=>void respondToInvitation(invitation,"accept")}>{invitationActionId===invitation.id?"Working…":"Accept"}</button></div></article>):<p className="notifications-empty">Workspace invitations will appear here.</p>}</div>}</div><span className="top-divider"/><button className="help-button" onClick={()=>toast("Help center coming soon")}><CircleHelp size={16}/>Help</button></div></header>
+      <div className="content" data-sheet={sheet}>
+        {!userEmail&&<div className="guest-banner"><span className="guest-badge"><Sparkles size={14}/> PREVIEW</span><span className="guest-message"><b>{clients.length?"Preview workspace.":"Your workspace starts empty."}</b> {clients.length?"Your test data stays in this browser until you create an account.":"Create a free account to save the clients, listings, and orders you add."}</span><button className="button primary guest-cta" onClick={()=>setModal("auth")}>Create free account <ArrowUpRight size={14}/></button></div>}
         <div className="page-heading"><div><div className="eyebrow">{sheet==="Overview"?"YOUR WORKSPACE":sheet==="Settings"?"WORKSPACE":workspaceScope?"SHARED WORKSPACE TABLE":"CLIENT WORKSPACE"} <span className="eyebrow-line"/></div><h1>{sheet==="Overview"?(userEmail?`Welcome back, ${userEmail.split("@")[0]} `:"Your dropshipping workspace "):sheet==="Settings"?"Settings":displaySheet}{sheet==="Overview"&&<span className="wave">✳</span>}</h1><p className="subheading">{sheet==="Overview"?(clients.length?"Here’s what’s happening across your client accounts today.":"Add your first client to start organizing your work."):sheet==="Settings"?"Rename a client, update their store details, or remove a client and everything stored for them.":`${current?.name} · ${current?.store}`}</p></div><div className="heading-actions">{sheet!=="Overview"&&sheet!=="Settings"&&<button className="button secondary" onClick={exportCsv}><ArrowDownToLine size={15}/> Export</button>}{current&&sheet!=="Settings"&&<button className="button secondary" onClick={()=>{setImportName("");setImportFile(null);setModal("import")}}><FileSpreadsheet size={15}/> Import CSV</button>}{userRole==="owner"&&(sheet==="Overview"||sheet==="Settings")&&<button className="button primary" onClick={()=>setModal("client")} disabled={clientBusy}><Plus size={16}/> Add client</button>}{sheet!=="Overview"&&sheet!=="Settings"&&<button className="button primary" onClick={addRow}><Plus size={16}/>{customTable?"Add row":sheet==="Listings"?"Add listing":sheet==="Orders"?"Add order":"Add product"}</button>}</div></div>
         {sheet==="Overview"?<>
           {current && !workspaceScope && !Object.values(visibleData[current.id]??{}).some(rows=>rows.length) ? <ClientSetup clientName={current.name} customTables={activeCustomTables} onOpenTable={id=>setSheet(id)} onChoose={(table)=>setSheet(table)} onImport={()=>{setImportName("");setImportFile(null);setModal("import")}}/> : visibleClients.length?<section className="welcome-card"><div className="welcome-copy"><span className="welcome-kicker"><Sparkles size={14}/> YOUR BUSINESS, AT A GLANCE</span><h2>Everything in its right place.</h2><p>Your clients, products, listings, and orders—all together, finally.</p><button onClick={()=>setSheet("Orders")}>View your orders <ArrowUpRight size={14}/></button></div><div className="welcome-art"><div className="art-orbit orbit-one"/><div className="art-orbit orbit-two"/><div className="art-card art-card-back"><span className="art-mini-icon mint"><Package size={14}/></span><span className="art-lines"><i/><i/></span><span className="art-check">✓</span></div><div className="art-card art-card-front"><span className="art-mini-icon peach"><ShoppingBag size={14}/></span><span className="art-lines"><i/><i/></span></div><div className="art-spark">✳</div><div className="art-dot"/></div></section>:<section className="welcome-card"><div className="welcome-copy"><span className="welcome-kicker"><Sparkles size={14}/> YOUR WORKSPACE IS READY</span><h2>No client workspaces yet.</h2><p>Create your first client to start tracking product ideas, listings, and orders.</p><button onClick={()=>setModal("client")}>Add your first client <ArrowUpRight size={14}/></button></div></section>}
@@ -662,7 +724,7 @@ function ListingModal({title,setTitle,sourceUrl,setSourceUrl,listedDate,setListe
 
 function OrderModal({draft,setDraft,onAdd}:{draft:Record<string,string>;setDraft:(value:Record<string,string>)=>void;onAdd:()=>void}) {
   const field=(id:string,label:string,type="text",placeholder="",step?:string,min?:string)=><label className="row-edit-field" htmlFor={`order-${id}`}><span>{label}</span><input id={`order-${id}`} type={type} step={step} min={min} className="modal-input" value={draft[id]??""} onChange={e=>setDraft({...draft,[id]:e.target.value})} placeholder={placeholder} required={id==="item"||id==="date"}/></label>;
-  return <form className="row-edit-form" onSubmit={e=>{e.preventDefault();onAdd()}}><span className="modal-icon lilac"><ShoppingBag size={19}/></span><h2>Add order</h2><p>Enter the order as it appears in your operations sheet. Order earnings and net profit calculate automatically.</p><div className="row-edit-fields">{field("date","ORDER DATE","date")}{field("orderId","EBAY ORDER ID","text","e.g. 05-12345-67890")}{field("item","ITEM NAME","text","e.g. Stainless steel water bottle")}{field("quantity","QUANTITY","number","1","1","1")}{field("sourceId","ALIEXPRESS ID","text","821430...")}{field("tracking","TRACKING","text","Tracking / carrier")}</div><div className="row-edit-fields">{field("subtotal","SUB TOTAL","number","0.00","0.01","0")}{field("transFee","TRANS. FEE","number","0.00","0.01","0")}{field("adFees","AD FEES","number","0.00","0.01","0")}{field("postage","POSTAGE","number","0.00","0.01","0")}{field("cost","COST OF GOODS","number","0.00","0.01","0")}</div><div className="modal-note"><TrendingUp size={15}/> Earnings = sub total minus fees. Net profit = earnings minus cost of goods.</div><button className="button primary modal-submit" type="submit"><Plus size={16}/> Add order</button></form>;
+  return <form className="row-edit-form order-edit-form" onSubmit={e=>{e.preventDefault();onAdd()}}><span className="modal-icon lilac"><ShoppingBag size={19}/></span><h2>Add order</h2><p>Enter the order as it appears in your operations sheet. Order earnings and net profit calculate automatically.</p><div className="row-edit-fields">{field("date","ORDER DATE","date")}{field("orderId","EBAY ORDER ID","text","e.g. 05-12345-67890")}{field("item","ITEM NAME","text","e.g. Stainless steel water bottle")}{field("quantity","QUANTITY","number","1","1","1")}{field("sourceId","ALIEXPRESS ID","text","821430...")}{field("tracking","TRACKING","text","Tracking / carrier")}</div><div className="row-edit-fields">{field("subtotal","SUB TOTAL","number","0.00","0.01","0")}{field("transFee","TRANS. FEE","number","0.00","0.01","0")}{field("adFees","AD FEES","number","0.00","0.01","0")}{field("postage","POSTAGE","number","0.00","0.01","0")}{field("cost","COST OF GOODS","number","0.00","0.01","0")}</div><div className="modal-note"><TrendingUp size={15}/> Earnings = sub total minus fees. Net profit = earnings minus cost of goods.</div><button className="button primary modal-submit" type="submit"><Plus size={16}/> Add order</button></form>;
 }
 
 function RowEditModal({title,draft,fields,setDraft,onSave,onClose}:{title:string;draft:Record<string,any>;fields:string[];setDraft:(value:Record<string,any>)=>void;onSave:()=>void;onClose:()=>void}) {
@@ -691,10 +753,16 @@ function parseCsv(input:string):{columns:string[];rows:Record<string,string>[]} 
   return {columns,rows};
 }
 
-function LandingPage({onStart,onLogin}:{onStart:()=>void;onLogin:()=>void}) {
+function ThemePicker({theme,onChange}:{theme:Theme;onChange:(theme:Theme)=>void}) {
+  const [open,setOpen]=useState(false);
+  const current=THEMES.find(option=>option.id===theme)??THEMES[0];
+  return <div className="theme-picker"><button type="button" className="theme-picker-trigger" aria-label={`Change theme. Current theme: ${current.name}`} aria-haspopup="menu" aria-expanded={open} onClick={()=>setOpen(!open)}><Palette size={16}/><span>{current.name}</span><ChevronDown size={13}/></button>{open&&<div className="theme-picker-menu" role="menu" aria-label="Choose a theme"><div className="theme-picker-heading"><b>Appearance</b><small>Choose your workspace mood</small></div>{THEMES.map(option=><button key={option.id} type="button" role="menuitemradio" aria-checked={theme===option.id} data-theme-id={option.id} className={`theme-option ${theme===option.id?"active":""}`} onClick={()=>{onChange(option.id);setOpen(false)}}><span className="theme-option-colors" aria-hidden="true">{option.colors.map(color=><i key={color} style={{background:color}}/>)}</span><span className="theme-option-copy"><b>{option.name}</b><small>{option.description}</small></span>{theme===option.id&&<Check size={15}/>}</button>)}</div>}</div>;
+}
+
+function LandingPage({theme,onThemeChange,onStart,onLogin,onPreview}:{theme:Theme;onThemeChange:(theme:Theme)=>void;onStart:()=>void;onLogin:()=>void;onPreview:()=>void}) {
   return <div className="landing-page">
-    <header className="landing-nav"><a className="landing-brand" href="#top"><span className="brand-mark"><ArrowLeftRight size={19} strokeWidth={2.4}/></span><span>dropdesk<span className="brand-dot">.</span></span></a><nav><a href="#features">Features</a><a href="#workflow">How it works</a></nav><div className="landing-nav-actions"><button className="landing-login" onClick={onLogin}>Log in</button><button className="landing-button landing-button-dark" onClick={onStart}>Get started free <ArrowUpRight size={15}/></button></div></header>
-    <section className="landing-hero" id="top"><div className="landing-hero-copy"><div className="landing-pill"><span/> THE WORKSPACE FOR DROPSHIP OPERATIONS</div><h1>Every client.<br/>Every moving part.<br/><em>One clear workspace.</em></h1><p>Keep product research, marketplace listings, and order profits organized across every client you manage.</p><div className="landing-hero-actions"><button className="landing-button landing-button-dark" onClick={onStart}>Create your free workspace <ArrowUpRight size={16}/></button><a href="#features" className="landing-text-link">See what you can organize <ArrowDown size={15}/></a></div><div className="landing-trust"><span className="trust-avatars"><i>R</i><i>M</i><i>A</i></span><span>Built for independent dropshippers and virtual assistants</span></div></div>
+    <header className="landing-nav"><a className="landing-brand" href="#top"><span className="brand-mark"><ArrowLeftRight size={19} strokeWidth={2.4}/></span><span>dropdesk<span className="brand-dot">.</span></span></a><nav><a href="#features">Features</a><a href="#workflow">How it works</a></nav><div className="landing-nav-actions"><ThemePicker theme={theme} onChange={onThemeChange}/><button className="landing-login" onClick={onLogin}>Log in</button><button className="landing-button landing-button-dark" onClick={onStart}>Get started free <ArrowUpRight size={15}/></button></div></header>
+    <section className="landing-hero" id="top"><div className="landing-hero-copy"><div className="landing-pill"><span/> THE WORKSPACE FOR DROPSHIP OPERATIONS</div><h1>Every client.<br/>Every moving part.<br/><em>One clear workspace.</em></h1><p>Keep product research, marketplace listings, and order profits organized across every client you manage.</p><div className="landing-hero-actions"><button className="landing-button landing-button-dark" onClick={onStart}>Create your free workspace <ArrowUpRight size={16}/></button><button className="landing-text-link landing-demo-link" onClick={onPreview}>Explore the demo workspace <ArrowUpRight size={14}/></button><a href="#features" className="landing-text-link">See what you can organize <ArrowDown size={15}/></a></div><div className="landing-trust"><span className="trust-avatars"><i>R</i><i>M</i><i>A</i></span><span>Built for independent dropshippers and virtual assistants</span></div></div>
       <div className="landing-visual" aria-label="Illustration of an organized dropshipping workspace"><div className="visual-glow"/><div className="visual-window"><div className="visual-top"><div className="visual-dots"><i/><i/><i/></div><span>YOUR WORKSPACE</span><span className="visual-menu">•••</span></div><div className="visual-title"><div><small>CLIENT PORTFOLIO</small><b>All your work, in one place</b></div><span className="visual-add">+</span></div><div className="visual-metrics"><div><span>CLIENTS</span><b><i/> Organized</b></div><div><span>PRODUCT IDEAS</span><b><i/> Track costs</b></div><div><span>ORDERS</span><b><i/> See profit</b></div></div><div className="visual-section-head"><b>Workspace tools</b><span>Ready when you are</span></div><div className="visual-tool"><span className="visual-tool-icon icon-sage"><Package size={16}/></span><span><b>Product hunting</b><small>Compare source cost and target price</small></span><ArrowUpRight size={14}/></div><div className="visual-tool"><span className="visual-tool-icon icon-peach"><ClipboardList size={16}/></span><span><b>Marketplace listings</b><small>Keep titles, links, and status together</small></span><ArrowUpRight size={14}/></div><div className="visual-tool"><span className="visual-tool-icon icon-lilac"><ShoppingBag size={16}/></span><span><b>Orders &amp; profit</b><small>Follow fulfillment and calculate margins</small></span><ArrowUpRight size={14}/></div></div><div className="visual-note"><span><TrendingUp size={15}/></span><div><b>Know where every order stands</b><small>One view for every client account</small></div></div><div className="visual-sparkle sparkle-a">✳</div><div className="visual-sparkle sparkle-b">✦</div></div>
     </section>
     <section className="landing-proof"><span>MADE TO KEEP THE DETAILS TOGETHER</span><div><b><Users size={16}/> CLIENT WORKSPACES</b><b><Package size={16}/> PRODUCT RESEARCH</b><b><Store size={16}/> MARKETPLACE LISTINGS</b><b><TrendingUp size={16}/> ORDER PROFIT</b></div></section>
