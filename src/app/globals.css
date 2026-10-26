@@ -419,10 +419,6 @@ select option{background-color:#fff;color:#3f463e}
 .demo-workspace .dropdesk-id-panel,
 .demo-workspace .team-panel{display:none}
 
-/* Orders already render the order ID in their first data cell; the generic row
-   title cell is not needed and made the table one column wider than its header. */
-.content[data-sheet="Orders"] .data-table tbody tr>td:nth-child(3){display:none}
-
 @media(max-width:900px){
   .data-table-wrap::before{
     content:"Swipe horizontally to see all columns";
