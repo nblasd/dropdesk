@@ -259,7 +259,9 @@ select option{background-color:#fff;color:#3f463e}
 .order-total b{font-family:var(--display);font-size:12px;font-weight:650;letter-spacing:-.2px}
 .order-total.profit b{color:#3f7350}
 .order-total.loss b{color:#b06a5a}
-.tracking-input{width:112px}
+.status-select{position:relative;padding:0 4px 0 7px}
+.status-select select{margin:0;padding:4px 12px 4px 0;border:0;background:transparent;color:inherit;font:inherit;font-weight:600;cursor:pointer;appearance:none}
+.status-select:after{content:"";position:absolute;right:4px;top:50%;width:4px;height:4px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-70%) rotate(45deg);pointer-events:none;opacity:.7}
 .qty-input{width:38px;text-align:center}
 :root[data-tone="dark"] .order-total{background:#202b22;border-color:#344338}
 :root[data-tone="dark"] .order-total small{color:#9fb3a3}

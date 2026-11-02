@@ -252,8 +252,10 @@ try {
   await waitFor(cdp, "Boolean(document.querySelector('.client-setup'))", "empty client setup");
   await capture(cdp, screenshotDir, "03-desktop-client-setup.png");
 
-  await clickText(cdp, ".client-setup-option", "Product hunting");
-  await waitFor(cdp, "Boolean(document.querySelector('.data-table-wrap'))", "Product hunting table");
+  await clickText(cdp, ".client-setup-option", "Marketplace listings");
+  await waitFor(cdp, "Boolean(document.querySelector('.data-table-wrap'))", "client listings table");
+  await clickText(cdp, ".nav-link", "Product hunting");
+  await waitFor(cdp, "document.body.innerText.includes('Add product') && Boolean(document.querySelector('.data-table-wrap'))", "shared product hunting table");
   await clickText(cdp, "button.primary", "Add product");
   await assertModal(cdp, "Add product idea", "Product");
   await capture(cdp, screenshotDir, "04-desktop-product-modal.png");
@@ -286,6 +288,12 @@ try {
   await clickText(cdp, ".modal button.primary", "Import and create table");
   await waitFor(cdp, "document.body.innerText.includes('Inventory notes') && Array.from(document.querySelectorAll('.custom-cell-input')).some(input => input.value === 'SKU-1001')", "imported custom table");
   await assertViewport(cdp, "Desktop custom table");
+
+  // Clients keep only Listings and Orders, so hop back into the client workspace.
+  await clickSelector(cdp, ".client-link");
+  await waitFor(cdp, "document.body.innerText.includes('Avery Stone') && !document.querySelector('.data-table-wrap')", "client overview");
+  await clickText(cdp, ".workspace-table-menu .nav-link", "Listings");
+  await waitFor(cdp, "Boolean(document.querySelector('.data-table-wrap'))", "client listings table");
 
   await clickText(cdp, ".sheet-tabs button", "Listings");
   await clickText(cdp, "button.primary", "Add listing");
@@ -325,10 +333,9 @@ try {
   await setField(cdp, "#order-orderId", "05-22010-77881");
   await setField(cdp, "#order-item", "Portable Espresso Maker — Cream");
   await setField(cdp, "#order-sourceId", "100500123456");
-  await setField(cdp, "#order-tracking", "USPS 9400100000000000000000");
   await setField(cdp, "#order-subtotal", "59.99");
   await setField(cdp, "#order-transFee", "7.80");
-  await setField(cdp, "#order-postage", "4.25");
+  await setField(cdp, "#order-earnings", "45.94");
   await setField(cdp, "#order-cost", "22.40");
   await clickSelector(cdp, ".modal .modal-submit");
   await waitFor(cdp, "!document.querySelector('.modal') && document.body.innerText.includes('05-22010-77881') && document.body.innerText.includes('TOTAL PROFIT')", "order creation");
@@ -383,9 +390,9 @@ try {
   await waitFor(cdp, "Boolean(document.querySelector('.sidebar.nav-open'))", "mobile navigation drawer");
   await sleep(300);
   await capture(cdp, screenshotDir, "21-mobile-navigation.png");
-  await clickText(cdp, ".workspace-table-menu .nav-link", "Product hunting");
+  await clickText(cdp, ".nav-link", "Product hunting");
   await sleep(300);
-  await waitFor(cdp, "Boolean(document.querySelector('.data-table-wrap'))", "mobile product table");
+  await waitFor(cdp, "document.body.innerText.includes('Add product') && Boolean(document.querySelector('.data-table-wrap'))", "mobile product table");
   await assertViewport(cdp, "Mobile product table");
   const tableMetrics = await evaluate(cdp, `(() => {
     const wrapper = document.querySelector('.data-table-wrap');
@@ -406,6 +413,17 @@ try {
   await clickSelector(cdp, ".add-table-tab");
   await assertModal(cdp, "Import a CSV", "Mobile import");
   await closeModal(cdp);
+
+  await clickSelector(cdp, ".nav-toggle");
+  await waitFor(cdp, "Boolean(document.querySelector('.sidebar.nav-open'))", "mobile navigation drawer");
+  await sleep(300);
+  await clickText(cdp, ".client-link", "Avery Stone");
+  await waitFor(cdp, "!document.querySelector('.sidebar.nav-open') && document.body.innerText.includes('Avery Stone')", "mobile client overview");
+  await clickSelector(cdp, ".nav-toggle");
+  await waitFor(cdp, "Boolean(document.querySelector('.sidebar.nav-open'))", "mobile navigation drawer");
+  await sleep(300);
+  await clickText(cdp, ".workspace-table-menu .nav-link", "Listings");
+  await waitFor(cdp, "Boolean(document.querySelector('.data-table-wrap'))", "mobile listings table");
 
   await clickText(cdp, ".sheet-tabs button", "Listings");
   await clickText(cdp, "button.primary", "Add listing");

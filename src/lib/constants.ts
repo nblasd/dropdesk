@@ -11,6 +11,13 @@ export const THEMES: ThemeDefinition[] = [
 export const THEME_STORAGE_KEY = "dropdesk-theme";
 
 export const emptyClientData = (): WorkspaceData[string] => ({
+  Listings: [],
+  Orders: [],
+});
+
+// The workspace scope holds the single shared Product hunting table, plus the
+// order/listing buckets every workspace data shape already carries.
+export const emptyWorkspaceData = (): WorkspaceData[string] => ({
   "Product hunting": [],
   Listings: [],
   Orders: [],
@@ -18,7 +25,10 @@ export const emptyClientData = (): WorkspaceData[string] => ({
 
 export const isLegacyDemoClient = (id: string) => /^c[123]$/.test(id) || /-c[123]$/.test(id);
 
-export const tabs: Sheet[] = ["Overview", "Product hunting", "Listings", "Orders"];
+// Clients only own listings and orders; product research lives in the shared table.
+export const clientTabs: Sheet[] = ["Listings", "Orders"];
+
+export const ORDER_STATUSES = ["Processing", "In transit", "Delivered", "Returned", "Cancelled"];
 
 // Sentinel "client" id that holds rows belonging to the workspace itself (no client).
 export const WORKSPACE_SCOPE_ID = "__workspace__";

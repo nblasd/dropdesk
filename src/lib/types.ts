@@ -36,18 +36,12 @@ export type Order = {
   source: string;
   item: string;
   quantity: number;
-  tracking: string;
   sale: number;
   fee: number;
   adFees: number;
-  postage: number;
   earnings: number;
   cost: number;
   profit: number;
-  discount: number;
-  returnFee: number;
-  returnTracking: string;
-  ebayReturnFee: number;
   status: string;
   date: string;
 };

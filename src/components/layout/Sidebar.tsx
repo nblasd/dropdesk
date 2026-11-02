@@ -41,7 +41,7 @@ type SidebarProps = {
   onCloseNav: () => void;
 };
 
-const builtInTables: BuiltInTable[] = ["Product hunting", "Listings", "Orders"];
+const clientTables: BuiltInTable[] = ["Listings", "Orders"];
 
 export function Sidebar({
   userEmail,
@@ -103,7 +103,7 @@ export function Sidebar({
 
         {!workspaceScope && (
           <div className="workspace-table-menu">
-            {builtInTables.map((name) => (
+            {clientTables.map((name) => (
               <button
                 key={name}
                 className={`nav-link ${sheet === name ? "active" : ""}`}
@@ -113,7 +113,7 @@ export function Sidebar({
                   onSelectBuiltIn(name);
                 }}
               >
-                {name === "Product hunting" ? <Package size={17} /> : name === "Listings" ? <ClipboardList size={17} /> : <ShoppingBag size={17} />}
+                {name === "Listings" ? <ClipboardList size={17} /> : <ShoppingBag size={17} />}
                 <span>{name}</span>
               </button>
             ))}

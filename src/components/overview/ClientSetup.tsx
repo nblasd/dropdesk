@@ -1,9 +1,8 @@
-import { ArrowUpRight, ClipboardList, FileSpreadsheet, Package, ShoppingBag, Sparkles } from "lucide-react";
+import { ArrowUpRight, ClipboardList, FileSpreadsheet, ShoppingBag, Sparkles } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { BuiltInTable, CustomTable } from "@/lib/types";
 
 const setupOptions: [BuiltInTable, string, string, LucideIcon][] = [
-  ["Product hunting", "Product hunting", "Save supplier links, target prices, and product research.", Package],
   ["Listings", "Marketplace listings", "Organize listing titles, source links, and listed dates.", ClipboardList],
   ["Orders", "Orders & profit", "Track fulfillment costs, sale prices, and profit per order.", ShoppingBag],
 ];
@@ -48,7 +47,7 @@ export function ClientSetup({
       <div className="client-setup-options">
         {setupOptions.map(([table, title, description, Icon]) => (
           <button key={table} className="client-setup-option" onClick={() => onChoose(table)}>
-            <span className={`client-setup-icon ${table === "Product hunting" ? "sage" : table === "Listings" ? "peach" : "lilac"}`}>
+            <span className={`client-setup-icon ${table === "Listings" ? "peach" : "lilac"}`}>
               <Icon size={18} />
             </span>
             <span className="client-setup-copy">

@@ -1,5 +1,5 @@
 import { ClipboardList, FileSpreadsheet, LayoutDashboard, Package, Plus, ShoppingBag } from "lucide-react";
-import { tabs } from "@/lib/constants";
+import { clientTabs } from "@/lib/constants";
 import type { CustomTable, Sheet } from "@/lib/types";
 
 export function SheetTabs({
@@ -17,7 +17,7 @@ export function SheetTabs({
   onSelect: (tab: Sheet) => void;
   onImport: () => void;
 }) {
-  const visibleTabs: Sheet[] = [...(workspaceScope ? (["Product hunting"] as Sheet[]) : tabs), ...activeCustomTables.map((table) => table.id)];
+  const visibleTabs: Sheet[] = [...(workspaceScope ? (["Product hunting"] as Sheet[]) : clientTabs), ...activeCustomTables.map((table) => table.id)];
 
   return (
     <div className="sheet-tabs">

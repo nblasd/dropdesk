@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { emptyClientData, isLegacyDemoClient, WORKSPACE_SCOPE_ID } from "@/lib/constants";
+import { emptyClientData, emptyWorkspaceData, isLegacyDemoClient, WORKSPACE_SCOPE_ID } from "@/lib/constants";
 import { errorText } from "@/lib/errors";
 import { isHttpUrl, isoDateToShort, sourceFromUrl } from "@/lib/format";
-import { orderDraftTemplate, orderEarnings, orderNetProfit } from "@/lib/orders";
+import { isOrderEarningsAuto, normalizeOrderRow, orderDraftTemplate, orderEarnings, orderEarningsValue, orderNetProfit } from "@/lib/orders";
 import { parseCsv } from "@/lib/csv";
 import type { Attribution, Client, CustomTable, Sheet, UserRole, WorkspaceData } from "@/lib/types";
 import type { AuthApi } from "@/hooks/useAuth";
@@ -18,6 +18,34 @@ type Options = {
   team: TeamApi;
   dialogs: WorkspaceDialogsApi;
   toast: (message: string) => void;
+};
+
+// Clients used to own a Product hunting table each. Product research now lives
+// in the single shared workspace table, so fold any leftover client rows into it
+// (de-duplicating by product id) as data loads.
+const migrateClientProducts = (input: WorkspaceData): WorkspaceData => {
+  const next: WorkspaceData = { ...input };
+  const shared = { ...emptyWorkspaceData(), ...(next[WORKSPACE_SCOPE_ID] ?? {}) };
+  const sharedProducts = Array.isArray(shared["Product hunting"]) ? shared["Product hunting"] : [];
+  const products: Record<string, any>[] = [];
+  const seen = new Set<string>();
+  const add = (row: Record<string, any>) => {
+    const key = String(row?.id ?? row?.__rowId ?? "");
+    if (key && seen.has(key)) return;
+    if (key) seen.add(key);
+    products.push(row);
+  };
+  sharedProducts.forEach(add);
+  Object.entries(next).forEach(([id, sheets]) => {
+    if (id === WORKSPACE_SCOPE_ID) return;
+    const clientSheets = { ...sheets };
+    const clientProducts = Array.isArray(clientSheets["Product hunting"]) ? clientSheets["Product hunting"] : [];
+    delete clientSheets["Product hunting"];
+    clientProducts.forEach(add);
+    next[id] = clientSheets;
+  });
+  next[WORKSPACE_SCOPE_ID] = { ...shared, "Product hunting": products };
+  return next;
 };
 
 export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
@@ -39,7 +67,7 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
   } = team;
 
   const [clients, setClients] = useState<Client[]>([]);
-  const [active, setActive] = useState("");
+  const [active, setActive] = useState(WORKSPACE_SCOPE_ID);
   const [sheet, setSheet] = useState<Sheet>("Overview");
   const [data, setData] = useState<WorkspaceData>({});
   const [customTables, setCustomTables] = useState<Record<string, CustomTable[]>>({});
@@ -73,7 +101,14 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
         const parsed = JSON.parse(saved);
         const savedClients: Client[] = Array.isArray(parsed.clients) ? parsed.clients.filter((c: Client) => !isLegacyDemoClient(c.id)) : [];
         const savedClientIds = new Set(savedClients.map((c) => c.id));
-        const savedData = Object.fromEntries(Object.entries(parsed.data ?? {}).filter(([id]) => savedClientIds.has(id))) as WorkspaceData;
+        const savedData = migrateClientProducts(
+          Object.fromEntries(
+            Object.entries(parsed.data ?? {}).filter(([id]) => savedClientIds.has(id) || id === WORKSPACE_SCOPE_ID),
+          ) as WorkspaceData,
+        );
+        Object.values(savedData).forEach((sheets) => {
+          if (Array.isArray(sheets.Orders)) sheets.Orders = sheets.Orders.map(normalizeOrderRow);
+        });
         const savedTables = Object.fromEntries(Object.entries(parsed.customTables ?? {}).filter(([id]) => savedClientIds.has(id))) as Record<
           string,
           CustomTable[]
@@ -81,7 +116,7 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
         setClients(savedClients);
         setData(savedData);
         setCustomTables(savedTables);
-        const initialActive = savedClientIds.has(parsed.active) ? parsed.active : (savedClients[0]?.id ?? "");
+        const initialActive = savedClientIds.has(parsed.active) ? parsed.active : (savedClients[0]?.id ?? WORKSPACE_SCOPE_ID);
         setActive(initialActive);
         localStorage.setItem(
           "dropdesk-demo",
@@ -241,16 +276,26 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
       next[c.id] = emptyClientData();
     });
     // Shared workspace table (no client) lives under a sentinel key.
-    next[WORKSPACE_SCOPE_ID] = emptyClientData();
+    next[WORKSPACE_SCOPE_ID] = emptyWorkspaceData();
     rowResult.data?.forEach((row: any) => {
       if (row.client_id === null || row.client_id === undefined) {
         if (row.workspace_id === initialWorkspaceId && row.sheet === "Product hunting")
           next[WORKSPACE_SCOPE_ID]["Product hunting"].push({ ...row.payload, __rowId: row.id, __createdBy: row.user_id });
         return;
       }
-      if (next[row.client_id] && row.sheet in next[row.client_id])
+      if (!next[row.client_id]) return;
+      // Legacy per-client product rows now belong to the shared table.
+      if (row.sheet === "Product hunting") {
+        next[WORKSPACE_SCOPE_ID]["Product hunting"].push({ ...row.payload, __rowId: row.id, __createdBy: row.user_id });
+        return;
+      }
+      if (row.sheet in next[row.client_id])
         next[row.client_id][row.sheet as Exclude<Sheet, "Overview">].push({ ...row.payload, __rowId: row.id, __createdBy: row.user_id });
     });
+    Object.values(next).forEach((sheets) => {
+      if (Array.isArray(sheets.Orders)) sheets.Orders = sheets.Orders.map(normalizeOrderRow);
+    });
+    const migrated = migrateClientProducts(next);
     const nextTables: Record<string, CustomTable[]> = {};
     tableResult.data?.forEach((table: any) => {
       if (next[table.client_id]) {
@@ -263,7 +308,7 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
       }
     });
     setClients(remoteClients);
-    setData(next);
+    setData(migrated);
     setCustomTables(nextTables);
     // With no clients yet, land on the shared table so the workspace is still usable.
     setActive(remoteClients[0]?.id ?? WORKSPACE_SCOPE_ID);
@@ -297,8 +342,8 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
       count: list.length,
       quantity: sum((row) => row.quantity),
       sales: sum((row) => row.sale),
-      fees: sum((row) => (Number(row.fee) || 0) + (Number(row.adFees) || 0) + (Number(row.postage) || 0)),
-      earnings: sum((row) => (row.earnings !== undefined && row.earnings !== null ? row.earnings : orderEarnings(row))),
+      fees: sum((row) => (Number(row.fee) || 0) + (Number(row.adFees) || 0)),
+      earnings: sum((row) => orderEarningsValue(row)),
       investment: sum((row) => row.cost),
       profit: sum((row) => orderNetProfit(row)),
     };
@@ -453,7 +498,7 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
       setData((previous) => Object.fromEntries(Object.entries(previous).filter(([id]) => id !== target.id)));
       setCustomTables((previous) => Object.fromEntries(Object.entries(previous).filter(([id]) => id !== target.id)));
       if (active === target.id) {
-        setActive(remaining[0]?.id ?? "");
+        setActive(remaining[0]?.id ?? WORKSPACE_SCOPE_ID);
         setSheet("Overview");
       }
       dialogs.setDeleteTarget(null);
@@ -557,10 +602,15 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
     const saleVal = Number(dialogs.orderDraft.subtotal),
       feeVal = Number(dialogs.orderDraft.transFee),
       adVal = Number(dialogs.orderDraft.adFees),
-      postVal = Number(dialogs.orderDraft.postage),
       costVal = Number(dialogs.orderDraft.cost);
-    if ([saleVal, feeVal, adVal, postVal, costVal].some((value) => !Number.isFinite(value) || value < 0)) {
+    if ([saleVal, feeVal, adVal, costVal].some((value) => !Number.isFinite(value) || value < 0)) {
       toast("Enter valid money amounts");
+      return;
+    }
+    const earningInput = dialogs.orderDraft.earnings.trim();
+    const earnings = earningInput === "" ? +(saleVal - feeVal - adVal).toFixed(2) : Number(earningInput);
+    if (!Number.isFinite(earnings)) {
+      toast("Enter a valid order earning");
       return;
     }
     const ebayId = dialogs.orderDraft.orderId.trim();
@@ -569,24 +619,18 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
       return;
     }
     const id = ebayId || `23-10601-${Math.floor(10000 + Math.random() * 90000)}`;
-    const earnings = +(saleVal - feeVal - adVal - postVal).toFixed(2);
     const order = {
       id,
       item,
       source: "AliExpress",
       sourceId: dialogs.orderDraft.sourceId.trim(),
-      tracking: dialogs.orderDraft.tracking.trim(),
       quantity,
       sale: saleVal,
       fee: feeVal,
       adFees: adVal,
-      postage: postVal,
       earnings,
       cost: costVal,
       profit: +(earnings - costVal).toFixed(2),
-      discount: 0,
-      returnFee: 0,
-      ebayReturnFee: 0,
       status: "Processing",
       date: isoDateToShort(dialogs.orderDraft.date) || new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
     };
@@ -683,8 +727,8 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
       nextDraft.margin = nextDraft.price ? Math.round((nextDraft.profit / nextDraft.price) * 100) : 0;
     }
     if (!customTable && sheet === "Orders") {
-      nextDraft.earnings = orderEarnings(nextDraft);
-      nextDraft.profit = +((Number(nextDraft.earnings) || 0) - (Number(nextDraft.cost) || 0)).toFixed(2);
+      if (isOrderEarningsAuto(dialogs.editingRow)) nextDraft.earnings = orderEarnings(nextDraft);
+      nextDraft.profit = orderNetProfit(nextDraft);
     }
     setRows(
       sheet,
@@ -740,15 +784,15 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
       setRows(targetSheet, next);
       return;
     }
-    const numeric = ["cost", "price", "sale", "fee", "profit", "margin", "quantity", "adFees", "postage", "discount", "returnFee", "ebayReturnFee"].includes(key);
+    const numeric = ["cost", "price", "sale", "fee", "earnings", "profit", "margin", "quantity", "adFees"].includes(key);
     old[key] = numeric ? parseFloat(value) || 0 : value;
     if (targetSheet === "Product hunting" && ["cost", "price"].includes(key)) {
       old.profit = +(old.price * 0.87 - old.cost).toFixed(2);
       old.margin = old.price ? Math.round((old.profit / old.price) * 100) : 0;
     }
     if (targetSheet === "Orders") {
-      old.earnings = orderEarnings(old);
-      old.profit = +((Number(old.earnings) || 0) - (Number(old.cost) || 0)).toFixed(2);
+      if (key !== "earnings" && isOrderEarningsAuto(next[rowIndex])) old.earnings = orderEarnings(old);
+      old.profit = orderNetProfit(old);
     }
     next[rowIndex] = old;
     setRows(targetSheet, next);

@@ -1,4 +1,5 @@
 import { Plus, ShoppingBag, TrendingUp } from "lucide-react";
+import { useState } from "react";
 
 function OrderField({
   id,
@@ -51,6 +52,11 @@ export function OrderModal({
     value: draft[id] ?? "",
     onChange: (value: string) => setDraft({ ...draft, [id]: value }),
   });
+  const [earningTouched, setEarningTouched] = useState(false);
+  const autoEarning =
+    draft.subtotal || draft.transFee || draft.adFees
+      ? +((Number(draft.subtotal) || 0) - (Number(draft.transFee) || 0) - (Number(draft.adFees) || 0)).toFixed(2)
+      : "";
 
   return (
     <form
@@ -64,7 +70,7 @@ export function OrderModal({
         <ShoppingBag size={19} />
       </span>
       <h2>Add order</h2>
-      <p>Enter the order as it appears in your operations sheet. Order earnings and net profit calculate automatically.</p>
+      <p>Enter the order as it appears in your operations sheet. Order earning auto-fills from fees, and net profit tracks cost of goods.</p>
 
       <div className="row-edit-fields">
         <OrderField {...bind("date")} label="ORDER DATE" type="date" />
@@ -72,19 +78,29 @@ export function OrderModal({
         <OrderField {...bind("item")} label="ITEM NAME" placeholder="e.g. Stainless steel water bottle" />
         <OrderField {...bind("quantity")} label="QUANTITY" type="number" placeholder="1" step="1" min="1" />
         <OrderField {...bind("sourceId")} label="ALIEXPRESS ID" placeholder="821430..." />
-        <OrderField {...bind("tracking")} label="TRACKING" placeholder="Tracking / carrier" />
       </div>
 
       <div className="row-edit-fields">
         <OrderField {...bind("subtotal")} label="SUB TOTAL" type="number" placeholder="0.00" step="0.01" min="0" />
         <OrderField {...bind("transFee")} label="TRANS. FEE" type="number" placeholder="0.00" step="0.01" min="0" />
         <OrderField {...bind("adFees")} label="AD FEES" type="number" placeholder="0.00" step="0.01" min="0" />
-        <OrderField {...bind("postage")} label="POSTAGE" type="number" placeholder="0.00" step="0.01" min="0" />
+        <OrderField
+          id="earnings"
+          label="ORDER EARNING"
+          type="number"
+          placeholder="Auto from fees"
+          step="0.01"
+          value={earningTouched ? draft.earnings ?? "" : String(autoEarning)}
+          onChange={(value) => {
+            setEarningTouched(true);
+            bind("earnings").onChange(value);
+          }}
+        />
         <OrderField {...bind("cost")} label="COST OF GOODS" type="number" placeholder="0.00" step="0.01" min="0" />
       </div>
 
       <div className="modal-note">
-        <TrendingUp size={15} /> Earnings = sub total minus fees. Net profit = earnings minus cost of goods.
+        <TrendingUp size={15} /> Order earning auto-fills from sub total minus fees, or type the actual payout. Net profit = order earning minus cost of goods.
       </div>
       <button className="button primary modal-submit" type="submit">
         <Plus size={16} /> Add order
