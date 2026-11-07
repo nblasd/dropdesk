@@ -37,6 +37,9 @@ export function useWorkspaceDialogs() {
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
+  const [rowDeleteTarget, setRowDeleteTarget] = useState<Record<string, any>[]>([]);
+  const [rowDeleteBusy, setRowDeleteBusy] = useState(false);
+
   const closeModal = () => setModal(null);
   const openAddClient = () => setModal("client");
 
@@ -66,6 +69,17 @@ export function useWorkspaceDialogs() {
   const requestDeleteClient = (client: Client) => {
     setDeleteTarget(client);
     setModal("deleteClient");
+  };
+
+  const requestDeleteRows = (rows: Record<string, any>[]) => {
+    if (!rows.length) return;
+    setRowDeleteTarget(rows);
+    setModal("deleteRow");
+  };
+
+  const closeRowDelete = () => {
+    setRowDeleteTarget([]);
+    setModal(null);
   };
 
   return {
@@ -120,6 +134,11 @@ export function useWorkspaceDialogs() {
     deleteBusy,
     setDeleteBusy,
 
+    rowDeleteTarget,
+    setRowDeleteTarget,
+    rowDeleteBusy,
+    setRowDeleteBusy,
+
     openAddClient,
     openImport,
     openProduct,
@@ -127,6 +146,8 @@ export function useWorkspaceDialogs() {
     openOrder,
     openClientSettings,
     requestDeleteClient,
+    requestDeleteRows,
+    closeRowDelete,
   };
 }
 

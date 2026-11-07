@@ -114,6 +114,7 @@ export type Modal =
   | "edit"
   | "clientSettings"
   | "deleteClient"
+  | "deleteRow"
   | "invite"
   | null;
 

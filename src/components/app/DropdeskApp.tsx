@@ -27,6 +27,7 @@ import { AddClientModal } from "@/components/modals/AddClientModal";
 import { AuthModal } from "@/components/modals/AuthModal";
 import { ClientSettingsModal } from "@/components/modals/ClientSettingsModal";
 import { DeleteClientModal } from "@/components/modals/DeleteClientModal";
+import { DeleteRowModal } from "@/components/modals/DeleteRowModal";
 import { ImportTableModal } from "@/components/modals/ImportTableModal";
 import { InviteModal } from "@/components/modals/InviteModal";
 import { ListingModal } from "@/components/modals/ListingModal";
@@ -109,6 +110,25 @@ export function DropdeskApp() {
     );
 
   const workspaceVisible = Boolean(auth.userEmail || demoMode);
+  const deleteNoun = workspace.customTable
+    ? "row"
+    : workspace.sheet === "Orders"
+      ? "order"
+      : workspace.sheet === "Listings"
+        ? "listing"
+        : workspace.sheet === "Product hunting"
+          ? "product"
+          : "row";
+
+  // Orders and listings are real business records, so deleting them asks the
+  // user to type the row id (or DELETE for a bulk selection). Custom tables and
+  // product hunting ideas stay a single click away from the confirm dialog.
+  const deleteConfirmText =
+    deleteNoun === "order" || deleteNoun === "listing"
+      ? dialogs.rowDeleteTarget.length === 1
+        ? String(dialogs.rowDeleteTarget[0]?.id ?? "")
+        : "DELETE"
+      : undefined;
 
   const rowHandlers = {
     selectedRows: workspace.selectedRows,
@@ -117,7 +137,7 @@ export function DropdeskApp() {
     onToggleSelect: workspace.toggleRowSelection,
     onSelectAll: workspace.toggleVisibleSelection,
     onEditRow: workspace.beginEditRow,
-    onDeleteRow: (row: Record<string, any>) => void workspace.deleteRow(row),
+    onDeleteRow: (row: Record<string, any>) => workspace.requestDeleteRow(row),
     onUpdateCell: (row: Record<string, any>, key: string, value: string) => workspace.updateCell(workspace.rows.indexOf(row), key, value),
   };
 
@@ -287,7 +307,7 @@ export function DropdeskApp() {
                     workspace.setQuery("");
                     workspace.setSourceFilter("All sources");
                   }}
-                  onDeleteSelected={workspace.deleteSelectedRows}
+                  onDeleteSelected={workspace.requestDeleteSelectedRows}
                   onExport={workspace.exportCsv}
                   onAddRow={workspace.addRow}
                   onShowToast={toast}
@@ -385,6 +405,15 @@ export function DropdeskApp() {
                 dialogs.closeModal();
                 dialogs.setDeleteTarget(null);
               }}
+            />
+          ) : dialogs.modal === "deleteRow" && dialogs.rowDeleteTarget.length ? (
+            <DeleteRowModal
+              rows={dialogs.rowDeleteTarget}
+              noun={deleteNoun}
+              confirmText={deleteConfirmText}
+              busy={dialogs.rowDeleteBusy}
+              onConfirm={workspace.confirmDeleteRows}
+              onCancel={dialogs.closeRowDelete}
             />
           ) : dialogs.modal === "invite" ? (
             <InviteModal

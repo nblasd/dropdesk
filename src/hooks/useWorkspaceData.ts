@@ -741,16 +741,36 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
     toast("Row updated");
   };
 
-  const deleteSelectedRows = async () => {
-    if (!selectedRows.length) return;
+  const rowNoun = customTable ? "row" : sheet === "Orders" ? "order" : sheet === "Listings" ? "listing" : sheet === "Product hunting" ? "product" : "row";
+
+  const requestDeleteRows = (targets: Record<string, any>[]) => {
+    if (!targets.length) return;
     if (!canWriteWorkspace) return toast("Your role is read-only");
-    const ok = await setRows(
-      sheet,
-      rows.filter((row) => !selectedRows.includes(rowKey(row))),
-    );
-    if (!ok) return;
-    setSelectedRows([]);
-    toast("Selected rows deleted");
+    dialogs.requestDeleteRows(targets);
+  };
+
+  const requestDeleteRow = (row: Record<string, any>) => requestDeleteRows([row]);
+
+  const requestDeleteSelectedRows = () => requestDeleteRows(rows.filter((row) => selectedRows.includes(rowKey(row))));
+
+  const confirmDeleteRows = async () => {
+    const targets = dialogs.rowDeleteTarget;
+    if (!targets.length) return;
+    if (!canWriteWorkspace) return toast("Your role is read-only");
+    const keys = new Set(targets.map((row) => rowKey(row)));
+    dialogs.setRowDeleteBusy(true);
+    try {
+      const ok = await setRows(
+        sheet,
+        rows.filter((row) => !keys.has(rowKey(row))),
+      );
+      if (!ok) return;
+      setSelectedRows((current) => current.filter((id) => !keys.has(id)));
+      dialogs.closeRowDelete();
+      toast(targets.length === 1 ? `${rowNoun[0].toUpperCase()}${rowNoun.slice(1)} deleted` : `${targets.length} rows deleted`);
+    } finally {
+      dialogs.setRowDeleteBusy(false);
+    }
   };
 
   const toggleRowSelection = (key: string) =>
@@ -764,13 +784,6 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
         ? (current) => current.filter((id) => !filtered.some((row: any) => rowKey(row) === id))
         : Array.from(new Set([...selectedRows, ...filtered.map((row: any) => rowKey(row))])),
     );
-
-  const deleteRow = async (row: Record<string, any>) => {
-    await setRows(
-      sheet,
-      rows.filter((candidate) => candidate !== row),
-    );
-  };
 
   const updateCell = (rowIndex: number, key: string, value: string) => {
     if (!canWriteWorkspace) return toast("Your role is read-only");
@@ -870,10 +883,11 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
     addRow,
     beginEditRow,
     saveEditedRow,
-    deleteSelectedRows,
+    requestDeleteRow,
+    requestDeleteSelectedRows,
+    confirmDeleteRows,
     toggleRowSelection,
     toggleVisibleSelection,
-    deleteRow,
     updateCell,
     exportCsv,
     reset,
