@@ -452,3 +452,10 @@ select option{background-color:#fff;color:#3f463e}
   .icon-button{width:32px;height:36px}
   .data-table-wrap::before{width:calc(100vw - 24px)}
 }
+
+/* Cloud-save status: the sheet header tells the truth instead of always saying "Saved locally". */
+.last-saved.error>span{background:#c2685a}
+.last-saved.error{color:#a9574a}
+:root[data-tone="dark"] .last-saved.error{color:#e0a294}
+.last-saved-retry{border:0;background:transparent;padding:0;font-size:9px;color:inherit;text-decoration:underline;text-underline-offset:2px}
+.last-saved-retry:hover{color:#8c4338}

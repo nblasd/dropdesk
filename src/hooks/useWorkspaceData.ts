@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { emptyClientData, emptyWorkspaceData, isLegacyDemoClient, WORKSPACE_SCOPE_ID } from "@/lib/constants";
@@ -23,6 +23,14 @@ type Options = {
 // Clients used to own a Product hunting table each. Product research now lives
 // in the single shared workspace table, so fold any leftover client rows into it
 // (de-duplicating by product id) as data loads.
+// A row's storage key is not its business id. Orders are keyed by eBay order id
+// and listings by LST-xxxx, so using those as the database primary key meant the
+// same order id in two clients overwrote one row and moved it between clients.
+const newRowKey = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `row-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
 const migrateClientProducts = (input: WorkspaceData): WorkspaceData => {
   const next: WorkspaceData = { ...input };
   const shared = { ...emptyWorkspaceData(), ...(next[WORKSPACE_SCOPE_ID] ?? {}) };
@@ -30,7 +38,7 @@ const migrateClientProducts = (input: WorkspaceData): WorkspaceData => {
   const products: Record<string, any>[] = [];
   const seen = new Set<string>();
   const add = (row: Record<string, any>) => {
-    const key = String(row?.id ?? row?.__rowId ?? "");
+    const key = String(row?.__rowId ?? row?.id ?? "");
     if (key && seen.has(key)) return;
     if (key) seen.add(key);
     products.push(row);
@@ -74,6 +82,11 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState("All sources");
   const [selectedRows, setSelectedRows] = useState<string[]>([]);
+  const [syncState, setSyncState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [syncError, setSyncError] = useState("");
+  const [syncAttempt, setSyncAttempt] = useState(0);
+  const saveSeq = useRef(0);
+  const lastSyncError = useRef("");
 
   const canWriteWorkspace = !userEmail || userRole !== "viewer";
   const visibleClients = selectedWorkspaceId ? clients.filter((c) => c.workspace_id === selectedWorkspaceId) : clients;
@@ -136,62 +149,110 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
     } catch {}
   }, [clients, data, customTables, active]);
 
+  // Autosave used to ignore every Supabase error, so a failed cloud write looked
+  // identical to a successful one until the page was reloaded. Record the
+  // outcome, tell the user once per distinct failure, and let them retry.
   useEffect(() => {
     if (!supabase || !userId) return;
+    let cancelled = false;
     const timer = setTimeout(async () => {
-      const clientRows = clients.filter((c) => c.workspace_id && c.user_id === userId).map((c) => ({ ...c, user_id: userId }));
-      if (clientRows.length) await supabase.from("clients").upsert(clientRows, { onConflict: "id" });
-      const workspaceRows = Object.entries(data)
-        .flatMap(([clientId, sheets]) =>
-          Object.entries(sheets).flatMap(([sheetName, records]) =>
-            (records as any[]).map((r) => {
-              const { __rowId: _rowId, __createdBy, ...payload } = r;
-              const shared = clientId === WORKSPACE_SCOPE_ID;
-              return {
-                id: String(r.id),
-                user_id: __createdBy ?? userId,
-                client_id: shared ? null : clientId,
-                workspace_id: shared ? (selectedWorkspaceId ?? null) : null,
-                sheet: sheetName,
-                payload,
-                updated_at: new Date().toISOString(),
-              };
-            }),
-          ),
-        )
-        .filter((row) => row.client_id !== null || row.workspace_id !== null);
-      if (workspaceRows.length) {
-        const { error: rowsError } = await supabase.from("workspace_rows").upsert(workspaceRows, { onConflict: "id" });
-        if (rowsError && (rowsError.code === "42703" || rowsError.code === "PGRST204")) {
-          // Shared-table migration not applied yet: save per-client rows the old way.
-          const legacyRows = workspaceRows
-            .filter((row) => row.client_id !== null)
-            .map((row) => ({
-              id: row.id,
-              user_id: row.user_id,
-              client_id: row.client_id,
-              sheet: row.sheet,
-              payload: row.payload,
-              updated_at: row.updated_at,
-            }));
-          if (legacyRows.length) await supabase.from("workspace_rows").upsert(legacyRows, { onConflict: "id" });
+      const seq = ++saveSeq.current;
+      setSyncState("saving");
+      const failures: { where: string; error: unknown }[] = [];
+      try {
+        const clientRows = clients.filter((c) => c.workspace_id && c.user_id === userId).map((c) => ({ ...c, user_id: userId }));
+        if (clientRows.length) {
+          const { error } = await supabase.from("clients").upsert(clientRows, { onConflict: "id" });
+          if (error) failures.push({ where: "clients", error });
         }
+        const workspaceRows = Object.entries(data)
+          .flatMap(([clientId, sheets]) =>
+            Object.entries(sheets).flatMap(([sheetName, records]) =>
+              (records as any[]).map((r) => {
+                const { __rowId: _rowId, __createdBy, ...payload } = r;
+                const shared = clientId === WORKSPACE_SCOPE_ID;
+                return {
+                  // Storage key, not the eBay/listing id, so two clients can hold
+                  // the same order id without overwriting each other's row.
+                  id: String(r.__rowId ?? r.id),
+                  user_id: __createdBy ?? userId,
+                  client_id: shared ? null : clientId,
+                  workspace_id: shared ? (selectedWorkspaceId ?? null) : null,
+                  sheet: sheetName,
+                  payload,
+                  updated_at: new Date().toISOString(),
+                };
+              }),
+            ),
+          )
+          .filter((row) => row.client_id !== null || row.workspace_id !== null);
+        if (workspaceRows.length) {
+          const { error: rowsError } = await supabase.from("workspace_rows").upsert(workspaceRows, { onConflict: "id" });
+          if (rowsError && (rowsError.code === "42703" || rowsError.code === "PGRST204")) {
+            // Shared-table migration not applied yet: save per-client rows the old way.
+            const legacyRows = workspaceRows
+              .filter((row) => row.client_id !== null)
+              .map((row) => ({
+                id: row.id,
+                user_id: row.user_id,
+                client_id: row.client_id,
+                sheet: row.sheet,
+                payload: row.payload,
+                updated_at: row.updated_at,
+              }));
+            if (legacyRows.length) {
+              const { error: legacyError } = await supabase.from("workspace_rows").upsert(legacyRows, { onConflict: "id" });
+              if (legacyError) failures.push({ where: "workspace_rows", error: legacyError });
+            }
+          } else if (rowsError) {
+            failures.push({ where: "workspace_rows", error: rowsError });
+          }
+        }
+        const tables = Object.entries(customTables).flatMap(([clientId, clientTables]) =>
+          clientTables.map((t) => ({
+            id: t.id,
+            user_id: userId,
+            client_id: clientId,
+            name: t.name,
+            columns: t.columns,
+            rows: t.rows,
+            updated_at: new Date().toISOString(),
+          })),
+        );
+        if (tables.length) {
+          const { error } = await supabase.from("workspace_tables").upsert(tables, { onConflict: "id" });
+          if (error) failures.push({ where: "workspace_tables", error });
+        }
+      } catch (error) {
+        failures.push({ where: "network", error });
       }
-      const tables = Object.entries(customTables).flatMap(([clientId, clientTables]) =>
-        clientTables.map((t) => ({
-          id: t.id,
-          user_id: userId,
-          client_id: clientId,
-          name: t.name,
-          columns: t.columns,
-          rows: t.rows,
-          updated_at: new Date().toISOString(),
-        })),
-      );
-      if (tables.length) await supabase.from("workspace_tables").upsert(tables, { onConflict: "id" });
+      // A newer edit already started saving; let that attempt own the status.
+      if (cancelled || seq !== saveSeq.current) return;
+      if (!failures.length) {
+        lastSyncError.current = "";
+        setSyncError("");
+        setSyncState("saved");
+        return;
+      }
+      const message = errorText(failures[0].error, "unknown error");
+      console.error("[Dropdesk][sync.save] failed", {
+        where: failures.map((failure) => failure.where).join(", "),
+        error: failures[0].error,
+      });
+      setSyncState("error");
+      setSyncError(message);
+      if (lastSyncError.current !== message) {
+        lastSyncError.current = message;
+        toast(`Changes are not saved to the cloud: ${message}`);
+      }
     }, 700);
-    return () => clearTimeout(timer);
-  }, [supabase, userId, selectedWorkspaceId, clients, data, customTables]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [supabase, userId, selectedWorkspaceId, clients, data, customTables, syncAttempt, toast]);
+
+  const retrySync = () => setSyncAttempt((attempt) => attempt + 1);
 
   const loadWorkspace = async (sb: SupabaseClient, uid: string, preferredWorkspaceId?: string | null): Promise<boolean> => {
     const clientResult = await sb.from("clients").select("id,name,initials,color,store,workspace_id,user_id,visibility").is("archived_at", null);
@@ -533,6 +594,7 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
     }
     const profit = +(price * 0.87 - cost).toFixed(2);
     const newProduct = {
+      __rowId: newRowKey(),
       id: `P-${Math.floor(1000 + Math.random() * 9000)}`,
       title,
       source: dialogs.productSource,
@@ -572,6 +634,7 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
       return;
     }
     const newListing = {
+      __rowId: newRowKey(),
       id: `LST-${Math.floor(1000 + Math.random() * 9000)}`,
       title,
       source: sourceFromUrl(sourceUrl),
@@ -620,6 +683,7 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
     }
     const id = ebayId || `23-10601-${Math.floor(10000 + Math.random() * 90000)}`;
     const order = {
+      __rowId: newRowKey(),
       id,
       item,
       source: "AliExpress",
@@ -837,6 +901,9 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
     setCustomTables({});
     setActive("");
     setSheet("Overview");
+    setSyncState("idle");
+    setSyncError("");
+    lastSyncError.current = "";
   };
 
   return {
@@ -853,6 +920,9 @@ export function useWorkspaceData({ auth, team, dialogs, toast }: Options) {
     setSourceFilter,
     selectedRows,
     setSelectedRows,
+    syncState,
+    syncError,
+    retrySync,
     canWriteWorkspace,
     visibleClients,
     visibleData,

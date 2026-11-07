@@ -24,6 +24,8 @@ type SheetPageProps = {
   ordersTotals: OrderTotalsValue | null;
   sharedRowsReady: boolean;
   labelsReady: boolean;
+  syncState: "idle" | "saving" | "saved" | "error";
+  syncError: string;
   query: string;
   handlers: RowHandlers;
   attributionFor: AttributionResolver;
@@ -35,6 +37,7 @@ type SheetPageProps = {
   onDeleteSelected: () => void;
   onExport: () => void;
   onAddRow: () => void;
+  onRetrySync: () => void;
   onShowToast: (message: string) => void;
 };
 
@@ -54,6 +57,8 @@ export function SheetPage({
   ordersTotals,
   sharedRowsReady,
   labelsReady,
+  syncState,
+  syncError,
   query,
   handlers,
   attributionFor,
@@ -65,6 +70,7 @@ export function SheetPage({
   onDeleteSelected,
   onExport,
   onAddRow,
+  onRetrySync,
   onShowToast,
 }: SheetPageProps) {
   return (
@@ -85,6 +91,9 @@ export function SheetPage({
         workspaceScope={workspaceScope}
         sharedRowsReady={sharedRowsReady}
         labelsReady={labelsReady}
+        syncState={syncState}
+        syncError={syncError}
+        onRetrySync={onRetrySync}
       />
       <TableToolbar
         sheet={sheet}

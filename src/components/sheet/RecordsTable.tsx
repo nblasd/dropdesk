@@ -31,7 +31,7 @@ export function RecordsTable({
       </thead>
       <tbody>
         {rows.map((row) => (
-          <tr key={row.id}>
+          <tr key={row.__rowId ?? row.id}>
             <td className="select-cell">
               <input
                 type="checkbox"

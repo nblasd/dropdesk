@@ -7,6 +7,9 @@ export function SheetSummary({
   workspaceScope,
   sharedRowsReady,
   labelsReady,
+  syncState,
+  syncError,
+  onRetrySync,
 }: {
   displaySheet: string;
   sheet: Sheet;
@@ -14,6 +17,9 @@ export function SheetSummary({
   workspaceScope: boolean;
   sharedRowsReady: boolean;
   labelsReady: boolean;
+  syncState: "idle" | "saving" | "saved" | "error";
+  syncError: string;
+  onRetrySync: () => void;
 }) {
   return (
     <div className="sheet-summary">
@@ -39,8 +45,22 @@ export function SheetSummary({
           )}
         </p>
       </div>
-      <span className="last-saved">
-        <span /> Saved locally
+      <span
+        className={`last-saved${syncState === "error" ? " error" : ""}`}
+        title={syncState === "error" ? `Cloud save failed: ${syncError}` : undefined}
+      >
+        <span />
+        {syncState === "error" ? (
+          <button type="button" className="last-saved-retry" onClick={onRetrySync}>
+            Not saved to cloud — retry
+          </button>
+        ) : syncState === "saving" ? (
+          "Saving…"
+        ) : syncState === "saved" ? (
+          "Saved to cloud"
+        ) : (
+          "Saved locally"
+        )}
       </span>
     </div>
   );

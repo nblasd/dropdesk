@@ -10,6 +10,9 @@ create table if not exists public.clients (
   created_at timestamptz not null default now()
 );
 create table if not exists public.workspace_rows (
+  -- Storage key, deliberately independent of the business id in payload (the eBay
+  -- order id or LST-xxxx). Using the business id here made the same order in two
+  -- clients overwrite one row and move it between clients.
   id text primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
   client_id text references public.clients(id) on delete cascade,

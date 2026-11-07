@@ -296,6 +296,8 @@ export function DropdeskApp() {
                   ordersTotals={workspace.ordersTotals}
                   sharedRowsReady={team.sharedRowsReady}
                   labelsReady={team.labelsReady}
+                  syncState={workspace.syncState}
+                  syncError={workspace.syncError}
                   query={workspace.query}
                   handlers={rowHandlers}
                   attributionFor={workspace.attributionFor}
@@ -310,6 +312,7 @@ export function DropdeskApp() {
                   onDeleteSelected={workspace.requestDeleteSelectedRows}
                   onExport={workspace.exportCsv}
                   onAddRow={workspace.addRow}
+                  onRetrySync={workspace.retrySync}
                   onShowToast={toast}
                 />
               )}
